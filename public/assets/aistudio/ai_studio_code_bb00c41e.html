@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>المبرمج الذكي المحلي - Local Arabic AI IDE</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --panel: #161b22;
+      --border: #30363d;
+      --text: #e6edf3;
+      --muted: #8b949e;
+      --accent: #2f81f7;
+      --green: #3fb950;
+      --code-bg: #010409;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Tahoma, sans-serif;
+      background: var(--bg); color: var(--text); height: 100vh; display: flex; flex-direction: column;
+    }
+    header {
+      background: var(--panel); border-bottom: 1px solid var(--border);
+      padding: 10px 16px; display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    }
+    header h1 { font-size: 16px; margin: 0; display: flex; align-items: center; gap: 8px; }
+    .controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    select, button {
+      background: var(--bg); color: var(--text); border: 1px solid var(--border);
+      padding: 6px 10px; border-radius: 6px; font-size: 13px; cursor: pointer;
+    }
+    button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+    button:hover { opacity: 0.9; }
+    .main { flex: 1; display: flex; overflow: hidden; }
+    .sidebar {
+      width: 280px; background: var(--panel); border-left: 1px solid var(--border);
+      display: flex; flex-direction: column; overflow: hidden;
+    }
+    .sidebar-header {
+      padding: 10px 12px; font-size: 13px; font-weight: 600; border-bottom: 1px solid var(--border);
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .file-list { flex: 1; overflow-y: auto; padding: 8px; font-family: monospace; font-size: 12px; direction: ltr; text-align: left; }
+    .file-item {
+      padding: 4px 6px; border-radius: 4px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .file-item:hover { background: #21262d; color: var(--accent); }
+    .chat-area { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+    .messages { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+    .msg {
+      max-width: 85%; padding: 12px 14px; border-radius: 10px; line-height: 1.6; font-size: 14px;
+      border: 1px solid var(--border);
+    }
+    .msg.user { align-self: flex-start; background: #1f2937; border-color: #374151; }
+    .msg.bot { align-self: flex-end; background: var(--panel); width: 85%; }
+    .msg pre {
+      background: var(--code-bg); padding: 10px; border-radius: 6px; overflow-x: auto;
+      direction: ltr; text-align: left; font-family: Consolas, monospace; font-size: 13px; border: 1px solid var(--border);
+    }
+    .msg code { font-family: Consolas, monospace; background: #21262d; padding: 1px 4px; border-radius: 4px; direction: ltr; }
+    .msg pre code { background: none; padding: 0; }
+    details.tools-box {
+      margin-bottom: 10px; background: #0d1117; border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; font-size: 12px;
+    }
+    details.tools-box summary { cursor: pointer; color: var(--green); font-weight: 600; }
+    .tool-step { margin-top: 8px; border-top: 1px dashed var(--border); padding-top: 6px; direction: ltr; text-align: left; }
+    .composer {
+      padding: 12px 16px; background: var(--panel); border-top: 1px solid var(--border);
+      display: flex; gap: 8px; align-items: flex-end;
+    }
+    textarea {
+      flex: 1; background: var(--bg); color: var(--text); border: 1px solid var(--border);
+      border-radius: 8px; padding: 10px; font-size: 14px; resize: none; min-height: 48px; max-height: 160px; font-family: inherit;
+    }
+    .modal {
+      display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.75);
+      align-items: center; justify-content: center; z-index: 50; padding: 20px;
+    }
+    .modal.open { display: flex; }
+    .modal-card {
+      background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+      width: 90%; max-width: 900px; max-height: 85vh; display: flex; flex-direction: column;
+    }
+    .modal-head { padding: 10px 14px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; direction: ltr; }
+    .modal-body { flex: 1; overflow: auto; padding: 14px; background: var(--code-bg); direction: ltr; text-align: left; font-family: monospace; font-size: 13px; white-space: pre-wrap; }
+    .status { font-size: 12px; color: var(--muted); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>⚡ الوكيل البرمجي المحلي (يدعم جميع اللهجات العربية)</h1>
+    <div class="controls">
+      <select id="modelSelect"></select>
+      <select id="dialectVoice">
+        <option value="ar-EG">صوت: مصري</option>
+        <option value="ar-SA">صوت: سعودي/خليجي</option>
+        <option value="ar-LB">صوت: شامي</option>
+        <option value="ar-MA">صوت: مغربي</option>
+        <option value="ar-IQ">صوت: عراقي</option>
+      </select>
+      <button onclick="resetChat()">جلسة جديدة</button>
+    </div>
+  </header>
+
+  <div class="main">
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <span>📁 ملفات بيئة العمل</span>
+        <button onclick="loadFiles()" style="padding:2px 8px;font-size:11px;">تحديث</button>
+      </div>
+      <div id="fileList" class="file-list">جاري التحميل...</div>
+    </aside>
+
+    <section class="chat-area">
+      <div id="messages" class="messages">
+        <div class="msg bot">
+          أهلاً بك! تقدر تكلمني بأي لهجة عربية (مصري، خليجي، شامي، مغاربي، عراقي أو فصحى).<br>
+          أنا متصل ببيئة العمل الخلفية (<code>workspace/</code>) وأقدر أنشئ ملفات، أعدل مشاريع كاملة، وأشغّل الأوامر وأختبر الكود بنفسي.
+        </div>
+      </div>
+      <div class="composer">
+        <button id="micBtn" onclick="toggleVoice()" title="تحدث باللهجة العربية">🎤</button>
+        <textarea id="input" placeholder="اكتب طلبك بأي لهجة... مثلاً: عايزك تعملي API بـ FastAPI لإدارة المهام وتختبره بـ pytest"></textarea>
+        <button id="sendBtn" class="primary" onclick="sendMessage()">إرسال</button>
+      </div>
+    </section>
+  </div>
+
+  <div id="fileModal" class="modal" onclick="if(event.target===this) closeModal()">
+    <div class="modal-card">
+      <div class="modal-head">
+        <strong id="modalTitle">file</strong>
+        <button onclick="closeModal()">إغلاق</button>
+      </div>
+      <pre id="modalContent" class="modal-body"></pre>
+    </div>
+  </div>
+
+  <script>
+    const sessionId = "session_" + Math.random().toString(36).slice(2, 9);
+
+    function escapeHtml(str) {
+      return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
+    function formatText(text) {
+      let safe = escapeHtml(text);
+      safe = safe.replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>');
+      safe = safe.replace(/`([^`]+)`/g, '<code>$1</code>');
+      return safe.replace(/\n/g, '<br>');
+    }
+
+    async function loadModels() {
+      const res = await fetch('/api/models');
+      const data = await res.json();
+      const sel = document.getElementById('modelSelect');
+      sel.innerHTML = data.models.map(m => `<option value="${escapeHtml(m)}" ${m === data.default ? 'selected' : ''}>${escapeHtml(m)}</option>`).join('');
+    }
+
+    async function loadFiles() {
+      const res = await fetch('/api/files');
+      const data = await res.json();
+      const box = document.getElementById('fileList');
+      const lines = data.tree.split('\n').filter(Boolean);
+      if (lines.length === 1 && !lines[0].startsWith('[')) {
+        box.textContent = lines[0];
+        return;
+      }
+      box.innerHTML = lines.map(line => {
+        if (line.startsWith('[FILE] ')) {
+          const p = line.replace('[FILE] ', '').trim();
+          return `<div class="file-item" onclick="openFile('${escapeHtml(p)}')">📄 ${escapeHtml(p)}</div>`;
+        }
+        return `<div class="file-item" style="color:var(--muted)">📁 ${escapeHtml(line.replace('[DIR]  ',''))}</div>`;
+      }).join('');
+    }
+
+    async function openFile(path) {
+      const res = await fetch('/api/file?path=' + encodeURIComponent(path));
+      const data = await res.json();
+      document.getElementById('modalTitle').textContent = data.path;
+      document.getElementById('modalContent').textContent = data.content;
+      document.getElementById('fileModal').classList.add('open');
+    }
+    function closeModal() { document.getElementById('fileModal').classList.remove('open'); }
+
+    function appendMessage(role, html) {
+      const div = document.createElement('div');
+      div.className = 'msg ' + role;
+      div.innerHTML = html;
+      const box = document.getElementById('messages');
+      box.appendChild(div);
+      box.scrollTop = box.scrollHeight;
+      return div;
+    }
+
+    async function sendMessage() {
+      const input = document.getElementById('input');
+      const text = input.value.trim();
+      if (!text) return;
+      input.value = '';
+      appendMessage('user', formatText(text));
+
+      const loader = appendMessage('bot', '<span class="status">⏳ جاري التحليل واستكشاف الملفات والتنفيذ...</span>');
+      const btn = document.getElementById('sendBtn');
+      btn.disabled = true;
+
+      try {
+        const res = await fetch('/api/chat', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            message: text,
+            session_id: sessionId,
+            model: document.getElementById('modelSelect').value
+          })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'خطأ في الخادم');
+
+        let toolsHtml = '';
+        if (data.steps && data.steps.length) {
+          const items = data.steps.map(s => `
+            <div class="tool-step">
+              <strong>⚙️ ${escapeHtml(s.tool)}</strong> (${escapeHtml(s.arguments)})
+              <pre>${escapeHtml(s.output)}</pre>
+            </div>`).join('');
+          toolsHtml = `<details class="tools-box"><summary>🛠️ تم تنفيذ ${data.steps.length} خطوة برمجية (اضغط للتفاصيل)</summary>${items}</details>`;
+        }
+        loader.innerHTML = toolsHtml + formatText(data.reply);
+        loadFiles();
+      } catch (e) {
+        loader.innerHTML = `<span style="color:#f85149">❌ ${escapeHtml(e.message)}</span>`;
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function resetChat() {
+      await fetch('/api/reset', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({session_id: sessionId})
+      });
+      document.getElementById('messages').innerHTML = '';
+      appendMessage('bot', 'تم بدء جلسة برمجية جديدة.');
+    }
+
+    function toggleVoice() {
+      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SR) return alert('متصفحك لا يدعم التعرف الصوتي المباشر، استخدم Chrome أو Edge.');
+      const rec = new SR();
+      rec.lang = document.getElementById('dialectVoice').value;
+      rec.interimResults = false;
+      const mic = document.getElementById('micBtn');
+      mic.textContent = '🔴';
+      rec.onresult = (e) => {
+        document.getElementById('input').value += ' ' + e.results[0][0].transcript;
+      };
+      rec.onend = () => { mic.textContent = '🎤'; };
+      rec.start();
+    }
+
+    document.getElementById('input').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+    });
+
+    loadModels();
+    loadFiles();
+  </script>
+</body>
+</html>
