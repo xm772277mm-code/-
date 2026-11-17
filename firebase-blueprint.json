@@ -1,0 +1,199 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Authenticated user profile and customizable Claude-style UI preferences.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 150
+        },
+        "photoURL": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "themePreset": {
+          "type": "string",
+          "enum": ["claude-light", "claude-dark", "midnight", "sand"],
+          "maxLength": 32
+        },
+        "accentColor": {
+          "type": "string",
+          "enum": ["terracotta", "hydrogen", "emerald", "plum"],
+          "maxLength": 32
+        },
+        "fontFamily": {
+          "type": "string",
+          "enum": ["editorial", "modern", "technical"],
+          "maxLength": 32
+        },
+        "fontSize": {
+          "type": "string",
+          "enum": ["sm", "md", "lg"],
+          "maxLength": 16
+        },
+        "density": {
+          "type": "string",
+          "enum": ["comfortable", "compact"],
+          "maxLength": 24
+        },
+        "deviceProfile": {
+          "type": "string",
+          "enum": ["desktop-50b", "mobile-50m"],
+          "maxLength": 24
+        },
+        "direction": {
+          "type": "string",
+          "enum": ["rtl", "ltr"],
+          "maxLength": 8
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "uid",
+        "displayName",
+        "email",
+        "themePreset",
+        "accentColor",
+        "fontFamily",
+        "fontSize",
+        "density",
+        "deviceProfile",
+        "direction",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "ChatThread": {
+      "title": "ChatThread",
+      "description": "A user conversation session metadata document.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 140
+        },
+        "deviceProfile": {
+          "type": "string",
+          "enum": ["desktop-50b", "mobile-50m"],
+          "maxLength": 24
+        },
+        "activeTopic": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "ownerId",
+        "title",
+        "deviceProfile",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "ChatMessage": {
+      "title": "ChatMessage",
+      "description": "Individual prompt or response message belonging to a user chat thread.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "chatId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "role": {
+          "type": "string",
+          "enum": ["user", "assistant"],
+          "maxLength": 16
+        },
+        "content": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16000
+        },
+        "dialect": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "kbTier": {
+          "type": "string",
+          "enum": ["desktop-50b", "mobile-50m"],
+          "maxLength": 24
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "ownerId",
+        "chatId",
+        "role",
+        "content",
+        "createdAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": {
+        "$ref": "#/entities/UserProfile"
+      },
+      "description": "Private user account and persisted UI customization settings."
+    },
+    "/users/{userId}/chats/{chatId}": {
+      "schema": {
+        "$ref": "#/entities/ChatThread"
+      },
+      "description": "Conversation threads owned exclusively by userId."
+    },
+    "/users/{userId}/chats/{chatId}/messages/{messageId}": {
+      "schema": {
+        "$ref": "#/entities/ChatMessage"
+      },
+      "description": "Ordered user and assistant messages inside a chat thread."
+    }
+  }
+}

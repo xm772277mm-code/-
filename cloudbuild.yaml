@@ -1,0 +1,26 @@
+steps:
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      - "build"
+      - "-t"
+      - "gcr.io/$PROJECT_ID/nawacore-studio:$COMMIT_SHA"
+      - "."
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      - "push"
+      - "gcr.io/$PROJECT_ID/nawacore-studio:$COMMIT_SHA"
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    entrypoint: gcloud
+    args:
+      - "run"
+      - "deploy"
+      - "nawacore-studio"
+      - "--image=gcr.io/$PROJECT_ID/nawacore-studio:$COMMIT_SHA"
+      - "--region=europe-west1"
+      - "--platform=managed"
+      - "--allow-unauthenticated"
+      - "--set-env-vars=NODE_ENV=production"
+      - "--set-secrets=GEMINI_API_KEY=GEMINI_API_KEY:latest"
+
+images:
+  - "gcr.io/$PROJECT_ID/nawacore-studio:$COMMIT_SHA"

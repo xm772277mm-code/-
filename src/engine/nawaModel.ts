@@ -8,6 +8,10 @@ export type AgentIntentId =
   | "create_algorithm_bench"
   | "create_web_app"
   | "create_cli_tool"
+  | "create_database_app"
+  | "create_auth_security"
+  | "debug_and_fix"
+  | "refactor_and_optimize"
   | "edit_existing_file"
   | "run_tests_or_cmd"
   | "explain_architecture"
@@ -24,15 +28,19 @@ export const INTENTS: IntentMeta[] = [
   { id: "list_workspace", labelAr: "استعراض الملفات", descriptionAr: "فحص هيكل المجلدات والملفات في بيئة العمل" },
   { id: "read_file", labelAr: "قراءة ملف", descriptionAr: "عرض محتوى ملف محدد مع أرقام الأسطر" },
   { id: "search_code", labelAr: "بحث في الكود", descriptionAr: "البحث عن دالة أو متغير أو نص في المشروع" },
-  { id: "create_fastapi_api", labelAr: "بناء API واختباره", descriptionAr: "إنشاء خادم REST API متكامل مع اختبارات آلية" },
+  { id: "create_fastapi_api", labelAr: "بناء API واختباره", descriptionAr: "إنشاء خادم REST API مخصص مع CRUD واختبارات آلية" },
   { id: "create_algorithm_bench", labelAr: "خوارزمية وقياس سرعة", descriptionAr: "كتابة خوارزمية عالية الأداء واختبار سرعتها" },
-  { id: "create_web_app", labelAr: "بناء واجهة ويب", descriptionAr: "إنشاء صفحة أو مكون واجهة مستخدم تفاعلي" },
+  { id: "create_web_app", labelAr: "بناء واجهة ويب", descriptionAr: "إنشاء صفحة أو تطبيق واجهة مستخدم تفاعلي" },
   { id: "create_cli_tool", labelAr: "أداة سطر أوامر", descriptionAr: "برمجة سكربت أو أداة CLI وتشغيلها" },
-  { id: "edit_existing_file", labelAr: "تعديل ملف موجود", descriptionAr: "تحديث أو إصلاح كود داخل ملف حالي" },
+  { id: "create_database_app", labelAr: "قاعدة بيانات SQLite", descriptionAr: "تصميم جداول SQLite واستعلامات واختبارات عملية" },
+  { id: "create_auth_security", labelAr: "نظام مصادقة وأمان", descriptionAr: "بناء تشفير كلمات مرور PBKDF2 وتوكنات HMAC واختبارها" },
+  { id: "debug_and_fix", labelAr: "فحص وإصلاح الأخطاء", descriptionAr: "فحص ملفات المشروع نحوياً واكتشاف الأعطال وإصلاحها" },
+  { id: "refactor_and_optimize", labelAr: "تحسين وإعادة هيكلة", descriptionAr: "مراجعة ملف حالي وتحسين أدائه ومعالجة أخطائه" },
+  { id: "edit_existing_file", labelAr: "تعديل ملف موجود", descriptionAr: "تحديث أو إضافة ميزة داخل ملف حالي" },
   { id: "run_tests_or_cmd", labelAr: "تشغيل أوامر واختبارات", descriptionAr: "تنفيذ أمر أو اختبار فعلي في الطرفية" },
-  { id: "explain_architecture", labelAr: "تحليل وشرح المشروع", descriptionAr: "استكشاف الملفات وشرح معمارية الكود" },
+  { id: "explain_architecture", labelAr: "تحليل وشرح المشروع", descriptionAr: "استكشاف الملفات وحساب الإحصائيات وشرح المعمارية" },
   { id: "generate_native_kernel", labelAr: "توليد نواة C++ / SIMD", descriptionAr: "كتابة نواة حسابية عالية السرعة بـ C++ أو WASM" },
-  { id: "general_coding_help", labelAr: "استشارة برمجية عامة", descriptionAr: "توجيه هندسي ومساعدة برمجية شاملة" },
+  { id: "general_coding_help", labelAr: "استشارة برمجية عامة", descriptionAr: "توجيه هندسي ومساعدة برمجية ذكية مرتبطة بالمشروع" },
 ];
 
 export interface TrainingSample {
@@ -50,10 +58,12 @@ export const INITIAL_TRAINING_CORPUS: TrainingSample[] = [
   { text: "وريني شكاين في الدوسي", intent: "list_workspace", dialect: "مغاربي" },
   { text: "شوفني الملفات الموجودة", intent: "list_workspace", dialect: "عراقي" },
   { text: "list files in workspace", intent: "list_workspace", dialect: "إنجليزي" },
+  { text: "ما هي محتويات المجلد الحالي", intent: "list_workspace", dialect: "فصحى" },
 
   // read_file
   { text: "اقرا ملف main.py ووريني محتواه", intent: "read_file", dialect: "مصري" },
   { text: "افتحلي ملف server.py اشوفه", intent: "read_file", dialect: "مصري" },
+  { text: "اقراه ووريني مكتوب فيه ايه", intent: "read_file", dialect: "مصري" },
   { text: "ابغى اقرا محتوى ملف app.py", intent: "read_file", dialect: "خليجي" },
   { text: "فرجيني شو مكتوب بملف config.json", intent: "read_file", dialect: "شامي" },
   { text: "شوفلي شنو كاين ف ملف tools.py", intent: "read_file", dialect: "مغاربي" },
@@ -71,13 +81,49 @@ export const INITIAL_TRAINING_CORPUS: TrainingSample[] = [
 
   // create_fastapi_api
   { text: "عايزك تعملي API بـ FastAPI لادارة المهام وتختبره", intent: "create_fastapi_api", dialect: "مصري" },
-  { text: "اعمل سيرفر REST API لادارة المستخدمين والمهام مع اختبارات", intent: "create_fastapi_api", dialect: "مصري" },
-  { text: "ابغى تسويلي باك اند API للمنتجات والطلبات واختبره", intent: "create_fastapi_api", dialect: "خليجي" },
-  { text: "بدي تعملي واجهة برمجية API بالمهام وتفحصها", intent: "create_fastapi_api", dialect: "شامي" },
-  { text: "بغيت تصاوب ليا API ديال المهام ب بايثون", intent: "create_fastapi_api", dialect: "مغاربي" },
-  { text: "اريد تسويلي API مال مهام وتختبره", intent: "create_fastapi_api", dialect: "عراقي" },
-  { text: "build a todo rest api server with tests", intent: "create_fastapi_api", dialect: "إنجليزي" },
+  { text: "اعمل سيرفر REST API لادارة المنتجات والمبيعات مع اختبارات", intent: "create_fastapi_api", dialect: "مصري" },
+  { text: "ابغى تسويلي باك اند API للمستخدمين والطلبات واختبره", intent: "create_fastapi_api", dialect: "خليجي" },
+  { text: "بدي تعملي واجهة برمجية API للفواتير وتفحصها", intent: "create_fastapi_api", dialect: "شامي" },
+  { text: "بغيت تصاوب ليا API ديال الطلاب ب Node js وتختبرو", intent: "create_fastapi_api", dialect: "مغاربي" },
+  { text: "اريد تسويلي API مال موظفين وتختبره", intent: "create_fastapi_api", dialect: "عراقي" },
+  { text: "build a rest api server with unit tests", intent: "create_fastapi_api", dialect: "إنجليزي" },
   { text: "3ayez API python ll tasks w tests", intent: "create_fastapi_api", dialect: "عربيزي" },
+
+  // create_database_app
+  { text: "اعملي قاعدة بيانات SQLite للمنتجات والمخزون واختبرها", intent: "create_database_app", dialect: "مصري" },
+  { text: "عايز داتابيز SQLite تحفظ بيانات العملاء والفواتير", intent: "create_database_app", dialect: "مصري" },
+  { text: "سويلي قاعدة بيانات SQL مع جداول واستعلامات بحث واختبرها", intent: "create_database_app", dialect: "خليجي" },
+  { text: "بدي نظام تخزين بقاعدة بيانات SQLite للطلاب والدرجات", intent: "create_database_app", dialect: "شامي" },
+  { text: "صاوب قاعدة بيانات SQLite ديال الطلبات واختبر الاستعلامات", intent: "create_database_app", dialect: "مغاربي" },
+  { text: "create sqlite database schema with crud queries and tests", intent: "create_database_app", dialect: "إنجليزي" },
+  { text: "انشئ نموذج قاعدة بيانات علائقية مع فهارس بحث سريعة", intent: "create_database_app", dialect: "فصحى" },
+
+  // create_auth_security
+  { text: "اعملي نظام تسجيل دخول ومصادقة وتشفير كلمات المرور واختبره", intent: "create_auth_security", dialect: "مصري" },
+  { text: "عايز كود امان لتوليد التوكنات Token و Hash بالـ HMAC", intent: "create_auth_security", dialect: "مصري" },
+  { text: "سويلي نظام حماية وتشفير الباسورد والتحقق من الجلسات", intent: "create_auth_security", dialect: "خليجي" },
+  { text: "بدي خدمة مصادقة مستخدمين Auth مع JWT او HMAC وتيست", intent: "create_auth_security", dialect: "شامي" },
+  { text: "صاوب ليا نظام امان وتشفير كلمات السر واختبرو", intent: "create_auth_security", dialect: "مغاربي" },
+  { text: "build secure password hashing pbkdf2 and token auth service", intent: "create_auth_security", dialect: "إنجليزي" },
+  { text: "انشئ وحدة مصادقة آمنة تدعم التحقق من الصلاحيات", intent: "create_auth_security", dialect: "فصحى" },
+
+  // debug_and_fix
+  { text: "افحص ملفات المشروع وشوف لو فيها اخطاء وصلحها", intent: "debug_and_fix", dialect: "مصري" },
+  { text: "الكود فيه مشكلة او باج عايزك تكتشفه وتصلحه", intent: "debug_and_fix", dialect: "مصري" },
+  { text: "شيك على الاخطاء البرمجية في كل الملفات وصححها", intent: "debug_and_fix", dialect: "خليجي" },
+  { text: "افحصلي الكود اذا فيه اعطال او اخطاء نحو واصلاحها", intent: "debug_and_fix", dialect: "شامي" },
+  { text: "قلب على المشاكل والاخطاء ف المشروع وصلحهم", intent: "debug_and_fix", dialect: "مغاربي" },
+  { text: "debug workspace files check syntax errors and fix bugs", intent: "debug_and_fix", dialect: "إنجليزي" },
+  { text: "قم بتشخيص الاخطاء البرمجية وفحص الصياغة في المشروع", intent: "debug_and_fix", dialect: "فصحى" },
+
+  // refactor_and_optimize
+  { text: "حسن اداء الكود واعمل له refactor ومعالجة اخطاء", intent: "refactor_and_optimize", dialect: "مصري" },
+  { text: "عايزك تراجع الملف وتنضف الكود وتسرعه", intent: "refactor_and_optimize", dialect: "مصري" },
+  { text: "طور الكود الموجود وخليه احترافي ومنظم اكثر", intent: "refactor_and_optimize", dialect: "خليجي" },
+  { text: "زبط هيكلية الكود وحسن جودته وسرعته", intent: "refactor_and_optimize", dialect: "شامي" },
+  { text: "حسن هاد الملف ونظم الدوال ديالو", intent: "refactor_and_optimize", dialect: "مغاربي" },
+  { text: "refactor and optimize existing code with error handling", intent: "refactor_and_optimize", dialect: "إنجليزي" },
+  { text: "اعادة هيكلة الكود لتحسين الكفاءة والموثوقية", intent: "refactor_and_optimize", dialect: "فصحى" },
 
   // create_algorithm_bench
   { text: "اعمل خوارزمية فرز سريعة واختبر سرعتها على مليون عنصر", intent: "create_algorithm_bench", dialect: "مصري" },
@@ -107,18 +153,18 @@ export const INITIAL_TRAINING_CORPUS: TrainingSample[] = [
   { text: "انشئ اداة برمجية لمعالجة البيانات النصية", intent: "create_cli_tool", dialect: "فصحى" },
 
   // edit_existing_file
-  { text: "عدل على ملف الكود وصلح الخطأ اللي فيه", intent: "edit_existing_file", dialect: "مصري" },
-  { text: "غير الدالة في الملف وزود عليها ميزة جديدة", intent: "edit_existing_file", dialect: "مصري" },
-  { text: "حدث الملف واضف معالجة الاخطاء", intent: "edit_existing_file", dialect: "خليجي" },
+  { text: "عدل على ملف الكود وزود فيه دالة جديدة", intent: "edit_existing_file", dialect: "مصري" },
+  { text: "غير السطر في الملف وضيفله خاصية البحث", intent: "edit_existing_file", dialect: "مصري" },
+  { text: "حدث الملف واضف معالجة المدخلات", intent: "edit_existing_file", dialect: "خليجي" },
   { text: "زبطلي الكود بالملف وعدل العنوان", intent: "edit_existing_file", dialect: "شامي" },
-  { text: "بدل هاد السطر ف الملف وصلحو", intent: "edit_existing_file", dialect: "مغاربي" },
+  { text: "بدل هاد السطر ف الملف", intent: "edit_existing_file", dialect: "مغاربي" },
   { text: "edit file and update function", intent: "edit_existing_file", dialect: "إنجليزي" },
-  { text: "قم بتعديل الملف الحالي واضافة تحسينات", intent: "edit_existing_file", dialect: "فصحى" },
+  { text: "قم بتعديل الملف الحالي واضافة خاصية", intent: "edit_existing_file", dialect: "فصحى" },
 
   // run_tests_or_cmd
   { text: "شغل الاختبارات واتاكد ان الكود شغال تمام", intent: "run_tests_or_cmd", dialect: "مصري" },
   { text: "نفذ السكربت في التيرمينال ووريني النتيجة", intent: "run_tests_or_cmd", dialect: "مصري" },
-  { text: "اختبر الكود وشوف اذا فيه اخطاء", intent: "run_tests_or_cmd", dialect: "خليجي" },
+  { text: "اختبر الكود وشوف اذا يشتغل", intent: "run_tests_or_cmd", dialect: "خليجي" },
   { text: "شغّل المشروع وافحص النتيجة", intent: "run_tests_or_cmd", dialect: "شامي" },
   { text: "خدم التيست وشوف واش خدام مزيان", intent: "run_tests_or_cmd", dialect: "مغاربي" },
   { text: "run tests and check python version", intent: "run_tests_or_cmd", dialect: "إنجليزي" },
@@ -152,7 +198,6 @@ export const INITIAL_TRAINING_CORPUS: TrainingSample[] = [
   { text: "عرفني بنفسك وبسرعة المحرك العصبي", intent: "general_coding_help", dialect: "فصحى" },
 ];
 
-// Dialect & Arabizi canonicalization dictionary
 const DIALECT_SYNONYMS: Record<string, string> = {
   // Want / Need
   "عايز": "اريد", "عايزك": "اريد", "عاوز": "اريد", "عاوزك": "اريد",
@@ -168,21 +213,27 @@ const DIALECT_SYNONYMS: Record<string, string> = {
   // Read / Show
   "وريني": "اعرض", "ورينا": "اعرض", "فرجيني": "اعرض", "شوف": "اعرض",
   "شوفلي": "اعرض", "شوفني": "اعرض", "اعرضلي": "اعرض", "اقرا": "اقرا",
-  "افتح": "اقرا", "افتحلي": "اقرا", "اشوفه": "اقرا", "read": "اقرا",
-  "show": "اعرض", "list": "اعرض", "open": "اقرا",
+  "اقراه": "اقرا", "افتح": "اقرا", "افتحلي": "اقرا", "اشوفه": "اقرا",
+  "read": "اقرا", "show": "اعرض", "list": "اعرض", "open": "اقرا",
   // Search
   "دور": "ابحث", "دورلي": "ابحث", "فين": "ابحث", "وين": "ابحث",
   "فتش": "ابحث", "فتشلي": "ابحث", "قلب": "ابحث", "search": "ابحث",
   "find": "ابحث", "eb7ath": "ابحث",
-  // Edit / Fix
-  "عدل": "تعديل", "غير": "تعديل", "صلح": "تعديل", "صلحو": "تعديل",
-  "زود": "تعديل", "حدث": "تعديل", "زبط": "تعديل", "زبطلي": "تعديل",
-  "بدل": "تعديل", "edit": "تعديل", "update": "تعديل", "fix": "تعديل",
+  // Edit / Fix / Debug / Refactor
+  "عدل": "تعديل", "غير": "تعديل", "زود": "تعديل", "ضيفله": "تعديل",
+  "حدث": "تعديل", "زبط": "تعديل", "زبطلي": "تعديل", "بدل": "تعديل",
+  "edit": "تعديل", "update": "تعديل",
+  "صلح": "اصلاح", "صلحه": "اصلاح", "صلحها": "اصلاح", "صلحهم": "اصلاح",
+  "صلحو": "اصلاح", "صححها": "اصلاح", "باج": "خطأ", "اعطال": "خطأ",
+  "مشكلة": "خطأ", "اخطاء": "خطأ", "الاخطاء": "خطأ", "شيك": "فحص",
+  "debug": "اصلاح", "fix": "اصلاح", "bugs": "خطأ", "syntax": "خطأ",
+  "حسن": "تحسين", "نضف": "تحسين", "نظم": "تحسين", "طور": "تحسين",
+  "refactor": "تحسين", "optimize": "تحسين", "clean": "تحسين",
   // Run / Test
   "شغل": "تشغيل", "شغّل": "تشغيل", "جرب": "تشغيل", "اختبر": "تشغيل",
-  "تختبره": "تشغيل", "وتختبره": "تشغيل", "نفذ": "تشغيل", "افحص": "تشغيل",
-  "تفحصها": "تشغيل", "خدم": "تشغيل", "shaghal": "تشغيل", "run": "تشغيل",
-  "test": "تشغيل", "tests": "تشغيل", "pytest": "تشغيل",
+  "تختبره": "تشغيل", "وتختبره": "تشغيل", "اختبرها": "تشغيل", "نفذ": "تشغيل",
+  "افحص": "فحص", "تفحصها": "تشغيل", "خدم": "تشغيل", "shaghal": "تشغيل",
+  "run": "تشغيل", "test": "تشغيل", "tests": "تشغيل", "pytest": "تشغيل",
   // Explain
   "اشرح": "شرح", "اشرحلي": "شرح", "فهمني": "شرح", "احكيلي": "شرح",
   "شرحلي": "شرح", "حلل": "شرح", "explain": "شرح", "architecture": "شرح",
@@ -191,6 +242,10 @@ const DIALECT_SYNONYMS: Record<string, string> = {
   "files": "ملف", "file": "ملف", "البروجي": "مشروع", "المشروع": "مشروع",
   "workspace": "مشروع", "codebase": "مشروع",
   "فاست": "fastapi", "ايبي": "api", "باك": "api", "سيرفر": "api",
+  "داتابيز": "قاعدة", "sqlite": "قاعدة", "جداول": "قاعدة", "sql": "قاعدة",
+  "تشفير": "امان", "باسورد": "امان", "الباسورد": "امان", "مصادقة": "امان",
+  "تسجيل": "امان", "توكنات": "امان", "token": "امان", "hmac": "امان",
+  "auth": "امان", "pbkdf2": "امان", "jwt": "امان",
   "خوارزميه": "خوارزمية", "فرز": "خوارزمية", "مصفوفات": "خوارزمية",
   "بنشمارك": "سرعة", "مليون": "سرعة", "سريعة": "سرعة", "سريع": "سرعة",
   "سكربت": "اداة", "تيرمينال": "تشغيل", "نواه": "نواة", "ويب": "صفحة",
@@ -202,9 +257,9 @@ export function normalizeArabicDialect(raw: string): {
   canonicalTokens: string[];
   detectedDialectHint: string;
 } {
-  let text = raw
+  const text = raw
     .toLowerCase()
-    .replace(/[\u064B-\u065F\u0670]/g, "") // Remove Tashkeel
+    .replace(/[\u064B-\u065F\u0670]/g, "")
     .replace(/[أإآ]/g, "ا")
     .replace(/ى/g, "ي")
     .replace(/ة/g, "ه")
@@ -213,9 +268,9 @@ export function normalizeArabicDialect(raw: string): {
     .trim();
 
   let dialectHint = "فصحى / تقني";
-  if (/(عايز|عاوز|ازاي|فين|النهارده|اعملي)/.test(text)) dialectHint = "مصري";
-  else if (/(ابغى|ابي|سويلي|وش|ودي)/.test(text)) dialectHint = "خليجي / سعودي";
-  else if (/(بدي|شو|ساويلنا|زبطلي|هيك)/.test(text)) dialectHint = "شامي";
+  if (/(عايز|عاوز|ازاي|فين|النهارده|اعملي|اقراه|ضيفله)/.test(text)) dialectHint = "مصري";
+  else if (/(ابغى|ابي|سويلي|وش|ودي|شيك)/.test(text)) dialectHint = "خليجي / سعودي";
+  else if (/(بدي|شو|ساويلنا|زبطلي|هيك|افحصلي)/.test(text)) dialectHint = "شامي";
   else if (/(بغيت|صاوب|كيفاش|ديال|واش|كاين)/.test(text)) dialectHint = "مغاربي";
   else if (/(شلونك|اريد|مال|شوفني)/.test(text)) dialectHint = "عراقي";
   else if (/[37]/.test(text) && /[a-z]/.test(text)) dialectHint = "عربيزي";
@@ -223,7 +278,6 @@ export function normalizeArabicDialect(raw: string): {
   const tokens = text.split(" ").filter(Boolean);
   const canonicalTokens = tokens.map((tok) => {
     if (DIALECT_SYNONYMS[tok]) return DIALECT_SYNONYMS[tok];
-    // Strip common Arabic prefixes (و، ف، ب، ل، ال) for matching
     const stripped = tok.replace(/^(وال|فال|بال|كال|ال|و|ف|ب|ل)/, "");
     if (stripped.length >= 2 && DIALECT_SYNONYMS[stripped]) {
       return DIALECT_SYNONYMS[stripped];
@@ -248,10 +302,10 @@ function fnv1aHash(str: string, seed = 2166136261): number {
   return h;
 }
 
-export const INPUT_DIM = 256;
-export const HIDDEN1_DIM = 128;
-export const HIDDEN2_DIM = 64;
-export const OUTPUT_DIM = INTENTS.length; // 12
+export const INPUT_DIM = 512;
+export const HIDDEN1_DIM = 192;
+export const HIDDEN2_DIM = 96;
+export const OUTPUT_DIM = INTENTS.length; // 16
 
 export function featurizeText(raw: string): {
   vector: Float32Array;
@@ -268,31 +322,33 @@ export function featurizeText(raw: string): {
     vec[idx] += sign * weight;
   };
 
-  // Canonical word unigrams (highest weight)
   for (const tok of norm.canonicalTokens) {
-    addFeature("C:" + tok, 2.2);
+    addFeature("C:" + tok, 2.3);
   }
-  // Canonical bigrams
   for (let i = 0; i < norm.canonicalTokens.length - 1; i++) {
-    addFeature("B:" + norm.canonicalTokens[i] + "_" + norm.canonicalTokens[i + 1], 1.8);
+    addFeature("B:" + norm.canonicalTokens[i] + "_" + norm.canonicalTokens[i + 1], 1.9);
   }
-  // Raw token unigrams
+  for (let i = 0; i < norm.canonicalTokens.length - 2; i++) {
+    addFeature("S:" + norm.canonicalTokens[i] + "_" + norm.canonicalTokens[i + 2], 1.1);
+  }
   for (const tok of norm.tokens) {
     addFeature("W:" + tok, 1.0);
-    // Character trigrams for robust morphology matching across dialects
     const padded = `^${tok}$`;
     for (let i = 0; i <= padded.length - 3; i++) {
-      addFeature("3:" + padded.slice(i, i + 3), 0.45);
+      addFeature("3:" + padded.slice(i, i + 3), 0.4);
     }
   }
-  // File extension & code cues
+
   if (/\.[a-z]{1,5}\b/.test(norm.normalized)) addFeature("HAS_FILENAME", 2.0);
   if (/(api|fastapi|express|rest|endpoint|crud|server)/.test(norm.normalized)) addFeature("CUE_API", 2.4);
-  if (/(html|css|react|صفحة|واجهة|داشبورد|موقع)/.test(norm.normalized)) addFeature("CUE_WEB", 2.2);
-  if (/(c\+\+|cpp|avx2|neon|simd|wasm|apk|exe|نواة|مليون)/.test(norm.normalized)) addFeature("CUE_NATIVE", 2.5);
-  if (/(فرز|sort|prime|matrix|خوارزمية|benchmark|سرعة)/.test(norm.normalized)) addFeature("CUE_ALGO", 2.3);
+  if (/(sqlite|sql|database|داتابيز|قاعده|جدول|جداول|تخزين)/.test(norm.normalized)) addFeature("CUE_DB", 2.8);
+  if (/(auth|token|hmac|pbkdf2|jwt|تشفير|امان|باسورد|مصادقه|تسجيل)/.test(norm.normalized)) addFeature("CUE_AUTH", 2.8);
+  if (/(debug|fix|bug|syntax|باج|اعطال|خطا|اخطاء|صلح|صحح|مشكله)/.test(norm.normalized)) addFeature("CUE_DEBUG", 2.7);
+  if (/(refactor|optimize|تحسين|نضف|هيكل|كفاءه|تسرع)/.test(norm.normalized)) addFeature("CUE_REFACTOR", 2.6);
+  if (/(html|css|react|صفحه|واجهة|داشبورد|موقع)/.test(norm.normalized)) addFeature("CUE_WEB", 2.2);
+  if (/(c\+\+|cpp|avx2|neon|simd|wasm|apk|exe|نواه|مليون)/.test(norm.normalized)) addFeature("CUE_NATIVE", 2.5);
+  if (/(فرز|sort|prime|matrix|خوارزميه|benchmark|سرعه)/.test(norm.normalized)) addFeature("CUE_ALGO", 2.3);
 
-  // L2 Normalize
   let normSq = 0;
   for (let i = 0; i < INPUT_DIM; i++) normSq += vec[i] * vec[i];
   const invNorm = normSq > 1e-8 ? 1 / Math.sqrt(normSq) : 1;
@@ -307,6 +363,30 @@ export interface EpochStat {
   accuracy: number;
 }
 
+export interface ExtractedSlots {
+  filename: string | null;
+  searchQuery: string | null;
+  command: string | null;
+  framework: "python" | "node" | "cpp" | "web";
+  domainEntity: {
+    nameEn: string;
+    nameAr: string;
+    fields: string[];
+  };
+  withTests: boolean;
+  usedContextMemory: boolean;
+  resolvedReferences: string[];
+  requestedFeature: string | null;
+}
+
+export interface ContextHint {
+  lastFile?: string | null;
+  lastDomain?: { nameEn: string; nameAr: string; fields: string[] } | null;
+  lastLanguage?: "python" | "node" | "cpp" | "web" | null;
+  lastIntent?: AgentIntentId | null;
+  taskScope?: AgentIntentId | "auto" | null;
+}
+
 export interface InferencePrediction {
   intent: AgentIntentId;
   labelAr: string;
@@ -316,12 +396,7 @@ export interface InferencePrediction {
   probabilities: Array<{ intent: AgentIntentId; labelAr: string; prob: number }>;
   wasmInferenceMs: number;
   wasmFlops: number;
-  slots: {
-    filename: string | null;
-    searchQuery: string | null;
-    command: string | null;
-    framework: string;
-  };
+  slots: ExtractedSlots;
 }
 
 class DeterministicRng {
@@ -340,25 +415,25 @@ class DeterministicRng {
   }
 }
 
-// Memory layout inside WASM linear memory (byte offsets, all 16-byte aligned)
-// Total weights + biases = 256*128 + 128 + 128*64 + 64 + 64*12 + 12 = 41,932 floats (~167.7 KiB)
+// Memory layout inside WASM linear memory (all aligned inside 0..500KiB, leaving 1MiB+ for bench_50m)
+// Total weights + biases = 512*192 + 192 + 192*96 + 96 + 96*16 + 16 = 118,576 floats (474,304 bytes)
 const WASM_OFFSETS = {
   w1: 0,
-  b1: 0 + HIDDEN1_DIM * INPUT_DIM * 4,
-  w2: 0 + HIDDEN1_DIM * INPUT_DIM * 4 + HIDDEN1_DIM * 4,
-  b2: 0 + HIDDEN1_DIM * INPUT_DIM * 4 + HIDDEN1_DIM * 4 + HIDDEN2_DIM * HIDDEN1_DIM * 4,
-  w3: 0 + HIDDEN1_DIM * INPUT_DIM * 4 + HIDDEN1_DIM * 4 + HIDDEN2_DIM * HIDDEN1_DIM * 4 + HIDDEN2_DIM * 4,
+  b1: HIDDEN1_DIM * INPUT_DIM * 4,
+  w2: (HIDDEN1_DIM * INPUT_DIM + HIDDEN1_DIM) * 4,
+  b2: (HIDDEN1_DIM * INPUT_DIM + HIDDEN1_DIM + HIDDEN2_DIM * HIDDEN1_DIM) * 4,
+  w3: (HIDDEN1_DIM * INPUT_DIM + HIDDEN1_DIM + HIDDEN2_DIM * HIDDEN1_DIM + HIDDEN2_DIM) * 4,
   b3:
-    0 +
-    HIDDEN1_DIM * INPUT_DIM * 4 +
-    HIDDEN1_DIM * 4 +
-    HIDDEN2_DIM * HIDDEN1_DIM * 4 +
-    HIDDEN2_DIM * 4 +
-    OUTPUT_DIM * HIDDEN2_DIM * 4,
-  x: 262144, // 256 KiB
-  h1: 262144 + 4096,
-  h2: 262144 + 8192,
-  logits: 262144 + 12288,
+    (HIDDEN1_DIM * INPUT_DIM +
+      HIDDEN1_DIM +
+      HIDDEN2_DIM * HIDDEN1_DIM +
+      HIDDEN2_DIM +
+      OUTPUT_DIM * HIDDEN2_DIM) *
+    4,
+  x: 524288, // 512 KiB
+  h1: 524288 + 4096,
+  h2: 524288 + 8192,
+  logits: 524288 + 12288,
 };
 
 export class NawaNeuralModel {
@@ -389,7 +464,7 @@ export class NawaNeuralModel {
     this.syncedToWasm = false;
 
     this.initWeights();
-    this.trainEpochs(110, 0.14);
+    this.trainEpochs(95, 0.16);
   }
 
   private initWeights(): void {
@@ -405,7 +480,7 @@ export class NawaNeuralModel {
     this.b3.fill(0);
   }
 
-  trainEpochs(epochs = 60, lr = 0.12): EpochStat[] {
+  trainEpochs(epochs = 60, baseLr = 0.14): EpochStat[] {
     const dataset = this.corpus.map((s) => ({
       x: featurizeText(s.text).vector,
       y: INTENTS.findIndex((meta) => meta.id === s.intent),
@@ -423,21 +498,23 @@ export class NawaNeuralModel {
     const recentStats: EpochStat[] = [];
 
     for (let ep = 1; ep <= epochs; ep++) {
+      // Cosine annealing learning rate
+      const lr = baseLr * (0.45 + 0.55 * Math.cos((Math.PI * ep) / (epochs * 1.15)));
       let totalLoss = 0;
       let correct = 0;
 
       for (let idx = 0; idx < n; idx++) {
         const { x, y } = dataset[idx];
 
-        // Forward Layer 1
         for (let i = 0; i < HIDDEN1_DIM; i++) {
           let sum = this.b1[i];
           const off = i * INPUT_DIM;
-          for (let j = 0; j < INPUT_DIM; j++) sum += this.w1[off + j] * x[j];
+          for (let j = 0; j < INPUT_DIM; j++) {
+            if (x[j] !== 0) sum += this.w1[off + j] * x[j];
+          }
           h1[i] = sum > 0 ? sum : 0;
         }
 
-        // Forward Layer 2
         for (let i = 0; i < HIDDEN2_DIM; i++) {
           let sum = this.b2[i];
           const off = i * HIDDEN1_DIM;
@@ -445,7 +522,6 @@ export class NawaNeuralModel {
           h2[i] = sum > 0 ? sum : 0;
         }
 
-        // Forward Layer 3 + Softmax
         let maxLogit = -Infinity;
         for (let i = 0; i < OUTPUT_DIM; i++) {
           let sum = this.b3[i];
@@ -469,43 +545,40 @@ export class NawaNeuralModel {
         if (predIdx === y) correct++;
         totalLoss += -Math.log(Math.max(1e-7, probs[y]));
 
-        // Backward Layer 3
         for (let i = 0; i < OUTPUT_DIM; i++) {
-          dLogits[i] = (probs[i] - (i === y ? 1 : 0)) / n;
+          dLogits[i] = probs[i] - (i === y ? 1 : 0);
         }
         dh2.fill(0);
         for (let i = 0; i < OUTPUT_DIM; i++) {
           const g = dLogits[i];
           const off = i * HIDDEN2_DIM;
-          this.b3[i] -= lr * g * n;
+          this.b3[i] -= lr * g;
           for (let j = 0; j < HIDDEN2_DIM; j++) {
             dh2[j] += this.w3[off + j] * g;
-            this.w3[off + j] -= lr * g * h2[j] * n;
+            this.w3[off + j] -= lr * g * h2[j];
           }
         }
 
-        // Backward Layer 2
         dh1.fill(0);
         for (let i = 0; i < HIDDEN2_DIM; i++) {
           if (h2[i] <= 0) continue;
           const g = dh2[i];
           const off = i * HIDDEN1_DIM;
-          this.b2[i] -= lr * g * n;
+          this.b2[i] -= lr * g;
           for (let j = 0; j < HIDDEN1_DIM; j++) {
             dh1[j] += this.w2[off + j] * g;
-            this.w2[off + j] -= lr * g * h1[j] * n;
+            this.w2[off + j] -= lr * g * h1[j];
           }
         }
 
-        // Backward Layer 1
         for (let i = 0; i < HIDDEN1_DIM; i++) {
           if (h1[i] <= 0) continue;
           const g = dh1[i];
           const off = i * INPUT_DIM;
-          this.b1[i] -= lr * g * n;
+          this.b1[i] -= lr * g;
           for (let j = 0; j < INPUT_DIM; j++) {
             if (x[j] !== 0) {
-              this.w1[off + j] -= lr * g * x[j] * n;
+              this.w1[off + j] -= lr * g * x[j];
             }
           }
         }
@@ -539,7 +612,7 @@ export class NawaNeuralModel {
     this.syncedToWasm = true;
   }
 
-  async predict(rawText: string): Promise<InferencePrediction> {
+  async predict(rawText: string, contextHint?: ContextHint): Promise<InferencePrediction> {
     const kernel = await getWasmKernel();
     if (!this.syncedToWasm) {
       await this.syncToWasm();
@@ -581,6 +654,31 @@ export class NawaNeuralModel {
 
     const logitsOffset = WASM_OFFSETS.logits >>> 2;
     const logits = Array.from(f32.subarray(logitsOffset, logitsOffset + OUTPUT_DIM));
+
+    // Apply contextual prior when user is inside a specific isolated task scope or uses short follow-ups
+    if (contextHint?.taskScope && contextHint.taskScope !== "auto") {
+      const scopeIdx = INTENTS.findIndex((i) => i.id === contextHint.taskScope);
+      if (scopeIdx >= 0) logits[scopeIdx] += 1.65;
+    }
+    if (contextHint?.lastFile && /^(اقراه|افتحه|شوفه|اختبره|شغله|صلحه|حسنه|عدله|اشرحه)/i.test(normalized.normalized)) {
+      if (/(اقراه|افتحه|شوفه)/.test(normalized.normalized)) {
+        const idx = INTENTS.findIndex((i) => i.id === "read_file");
+        if (idx >= 0) logits[idx] += 2.2;
+      } else if (/(اختبره|شغله)/.test(normalized.normalized)) {
+        const idx = INTENTS.findIndex((i) => i.id === "run_tests_or_cmd");
+        if (idx >= 0) logits[idx] += 2.2;
+      } else if (/(صلحه|افحصه)/.test(normalized.normalized)) {
+        const idx = INTENTS.findIndex((i) => i.id === "debug_and_fix");
+        if (idx >= 0) logits[idx] += 2.2;
+      } else if (/(حسنه|نضفه)/.test(normalized.normalized)) {
+        const idx = INTENTS.findIndex((i) => i.id === "refactor_and_optimize");
+        if (idx >= 0) logits[idx] += 2.2;
+      } else if (/(اشرحه|فهمني)/.test(normalized.normalized)) {
+        const idx = INTENTS.findIndex((i) => i.id === "explain_architecture");
+        if (idx >= 0) logits[idx] += 2.2;
+      }
+    }
+
     const maxLogit = Math.max(...logits);
     const exps = logits.map((v) => Math.exp(v - maxLogit));
     const expSum = exps.reduce((a, b) => a + b, 0);
@@ -592,7 +690,7 @@ export class NawaNeuralModel {
     })).sort((a, b) => b.prob - a.prob);
 
     const top = probs[0];
-    const slots = extractSlots(rawText, normalized.normalized);
+    const slots = extractSlots(rawText, normalized.normalized, contextHint);
 
     return {
       intent: top.intent,
@@ -613,15 +711,13 @@ export class NawaNeuralModel {
   }
 
   exportWeightsBinary(): Uint8Array {
-    // Header: magic "NAWA" (4B) + dims (4 x uint32 = 16B) + weights float32
     const headerSize = 20;
-    const totalFloats = this.totalParams;
-    const buf = new ArrayBuffer(headerSize + totalFloats * 4);
+    const buf = new ArrayBuffer(headerSize + this.totalParams * 4);
     const view = new DataView(buf);
-    view.setUint8(0, 0x4e); // N
-    view.setUint8(1, 0x41); // A
-    view.setUint8(2, 0x57); // W
-    view.setUint8(3, 0x41); // A
+    view.setUint8(0, 0x4e);
+    view.setUint8(1, 0x41);
+    view.setUint8(2, 0x57);
+    view.setUint8(3, 0x41);
     view.setUint32(4, INPUT_DIM, true);
     view.setUint32(8, HIDDEN1_DIM, true);
     view.setUint32(12, HIDDEN2_DIM, true);
@@ -639,26 +735,96 @@ export class NawaNeuralModel {
   }
 }
 
-function extractSlots(raw: string, normalized: string) {
-  const fileMatch = raw.match(/([a-zA-Z0-9_\-/]+\.(?:py|js|ts|tsx|html|css|json|md|cpp|h|kt|txt))/);
+function extractDomainEntityExplicit(normalized: string): ExtractedSlots["domainEntity"] | null {
+  if (/(منتج|منتجات|مبيعات|متجر|سلع|product)/.test(normalized)) {
+    return { nameEn: "products", nameAr: "المنتجات", fields: ["name", "price", "stock"] };
+  }
+  if (/(طالب|طلاب|درجات|مدرسه|جامعه|student)/.test(normalized)) {
+    return { nameEn: "students", nameAr: "الطلاب", fields: ["name", "grade", "major"] };
+  }
+  if (/(فاتور|فواتير|دفع|مدفوع|invoice)/.test(normalized)) {
+    return { nameEn: "invoices", nameAr: "الفواتير", fields: ["customer", "amount", "paid"] };
+  }
+  if (/(موظف|موظفين|رواتب|عمال|employee)/.test(normalized)) {
+    return { nameEn: "employees", nameAr: "الموظفين", fields: ["name", "role", "salary"] };
+  }
+  if (/(مستخدم|مستخدمين|عملاء|حساب|user)/.test(normalized)) {
+    return { nameEn: "users", nameAr: "المستخدمين", fields: ["username", "email", "active"] };
+  }
+  if (/(طلب|طلبات|اوردرات|order)/.test(normalized)) {
+    return { nameEn: "orders", nameAr: "الطلبات", fields: ["item", "qty", "status"] };
+  }
+  if (/(مهمه|مهام|تاسك|task)/.test(normalized)) {
+    return { nameEn: "tasks", nameAr: "المهام", fields: ["title", "priority", "done"] };
+  }
+  return null;
+}
+
+function extractSlots(raw: string, normalized: string, contextHint?: ContextHint): ExtractedSlots {
+  const fileMatch = raw.match(/([a-zA-Z0-9_\-/]+\.(?:py|js|mjs|ts|tsx|html|css|json|md|cpp|h|kt|txt))/);
   const cmdMatch = raw.match(/`([^`]+)`/);
+  const resolvedReferences: string[] = [];
+  let usedContextMemory = false;
 
   let searchQuery: string | null = null;
-  const searchPattern = raw.match(/(?:دورلي على|دور على|ابحث عن|فين|وين|فتشلي على|search(?: code)?(?: for)?)\s+(?:كلمة|دالة|متغير|كلاس)?\s*([^\s،؟]+)/i);
+  const searchPattern = raw.match(
+    /(?:دورلي على|دور على|ابحث عن|فين|وين|فتشلي على|search(?: code)?(?: for)?)\s+(?:كلمة|دالة|متغير|كلاس)?\s*([^\s،؟]+)/i
+  );
   if (searchPattern && searchPattern[1]) {
     searchQuery = searchPattern[1].replace(/["'`]/g, "");
   }
 
-  let framework = "python";
-  if (/node|express|typescript|javascript/i.test(normalized)) framework = "node";
-  else if (/c\+\+|cpp|avx2|neon/i.test(normalized)) framework = "cpp";
-  else if (/html|css|web|صفحة/i.test(normalized)) framework = "web";
+  let framework: ExtractedSlots["framework"] | null = null;
+  if (/(node|nodejs|express|javascript|typescript|\bjs\b)/i.test(normalized)) framework = "node";
+  else if (/(python|fastapi|بايثون|sqlite)/i.test(normalized)) framework = "python";
+  else if (/(c\+\+|cpp|avx2|neon)/i.test(normalized)) framework = "cpp";
+  else if (/(html|css|react|صفحه|واجهة|داشبورد)/i.test(normalized)) framework = "web";
+
+  if (!framework && contextHint?.lastLanguage && /(نفس|كمان|برضو|تاني|واحد|حول|ضيف)/.test(normalized)) {
+    framework = contextHint.lastLanguage;
+    usedContextMemory = true;
+    resolvedReferences.push(`اللغة الموروثة: ${framework}`);
+  }
+  if (!framework) framework = "python";
+
+  const explicitDomain = extractDomainEntityExplicit(normalized);
+  let domainEntity = explicitDomain;
+  if (!domainEntity && contextHint?.lastDomain) {
+    domainEntity = contextHint.lastDomain;
+    if (/(نفس|عليه|له|لها|تاني|كمان|حول|ضيف|قاعده|sqlite|api)/i.test(normalized)) {
+      usedContextMemory = true;
+      resolvedReferences.push(`المجال السياقي: ${domainEntity.nameAr}`);
+    }
+  }
+  if (!domainEntity) {
+    domainEntity = { nameEn: "tasks", nameAr: "المهام", fields: ["title", "priority", "done"] };
+  }
+
+  let filename = fileMatch ? fileMatch[1] : null;
+  if (!filename && contextHint?.lastFile && /(اقراه|افتحه|شوفه|اختبره|شغله|صلحه|عدله|حسنه|اشرحه|الملف ده|الكود ده|ضيفله|زودله)/.test(normalized)) {
+    filename = contextHint.lastFile;
+    usedContextMemory = true;
+    resolvedReferences.push(`الملف النشط: ${filename}`);
+  }
+
+  let requestedFeature: string | null = null;
+  const featMatch = raw.match(/(?:ضيف|زود|اضف)(?:له|لها| فيه)?\s+(?:دالة|ميزة|خاصية)?\s*([^\n،.]+)/i);
+  if (featMatch && featMatch[1]) {
+    requestedFeature = featMatch[1].trim();
+  }
+
+  const withTests = !/(بدون اختبار|من غير تيست|without test)/i.test(normalized);
 
   return {
-    filename: fileMatch ? fileMatch[1] : null,
+    filename,
     searchQuery,
     command: cmdMatch ? cmdMatch[1] : null,
     framework,
+    domainEntity,
+    withTests,
+    usedContextMemory,
+    resolvedReferences,
+    requestedFeature,
   };
 }
 

@@ -535,9 +535,9 @@ export async function getWasmKernel(): Promise<WasmKernelInstance> {
     };
 
     const runBenchmark = (targetOps = 50_000_000): BenchmarkResult => {
-      // Reserve scratch space at offset 524288 (512 KiB) so model weights at 0..256KiB remain untouched
+      // Reserve scratch space at offset 1048576 (1 MiB) so model weights + activations at 0..600KiB remain untouched
       const vecLen = 65536; // 65,536 float32 = 256 KiB (L2-resident)
-      const wPtr = 524288;
+      const wPtr = 1048576;
       const xPtr = wPtr + vecLen * 4;
       const f32View = new Float32Array(exports.memory.buffer);
       const wBase = wPtr >>> 2;

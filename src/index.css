@@ -3,15 +3,32 @@
 
 @layer base {
   :root {
-    --font-display: 'Readex Pro', 'IBM Plex Sans Arabic', system-ui, sans-serif;
-    --font-sans: 'IBM Plex Sans Arabic', system-ui, -apple-system, sans-serif;
+    --font-display: 'Noto Naskh Arabic', 'Readex Pro', 'IBM Plex Sans Arabic', Georgia, serif;
+    --font-sans: 'IBM Plex Sans Arabic', 'Noto Naskh Arabic', system-ui, -apple-system, sans-serif;
     --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+    --nawa-bg: #FAF9F5;
+    --nawa-sidebar: #F2EFE8;
+    --nawa-surface: #FFFFFF;
+    --nawa-elevated: #F5F3EC;
+    --nawa-border: rgba(31, 30, 26, 0.11);
+    --nawa-text: #1F1E1A;
+    --nawa-muted: #6B675E;
+    --nawa-user-bubble: #EFECE4;
+    --nawa-code-bg: #1E1D1A;
+    --nawa-code-text: #F2EFE8;
+    --nawa-accent: #C96442;
+    --nawa-accent-hover: #B45333;
+    --nawa-accent-soft: rgba(201, 100, 66, 0.12);
+    --nawa-font-size: 15.5px;
   }
 
   body {
     font-family: var(--font-sans);
-    background-color: #0B0F17;
-    color: #E6EDF3;
+    font-size: var(--nawa-font-size);
+    background-color: var(--nawa-bg);
+    color: var(--nawa-text);
+    transition: background-color 180ms ease, color 180ms ease;
   }
 
   h1, h2, h3, h4, .font-display {
@@ -39,10 +56,10 @@
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(148, 163, 184, 0.22);
+  background: rgba(120, 113, 108, 0.25);
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(148, 163, 184, 0.38);
+  background: rgba(120, 113, 108, 0.42);
 }

@@ -1,0 +1,157 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global Safety Net: Default Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Reusable Security Primitives
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isVerified() && request.auth.uid == userId;
+    }
+
+    // Blueprint Validation Helpers
+    function isValidUserProfile(data, userId) {
+      return data.keys().hasAll([
+        'uid', 'displayName', 'email', 'themePreset', 'accentColor',
+        'fontFamily', 'fontSize', 'density', 'deviceProfile', 'direction',
+        'createdAt', 'updatedAt'
+      ])
+      && data.keys().hasOnly([
+        'uid', 'displayName', 'email', 'photoURL', 'themePreset', 'accentColor',
+        'fontFamily', 'fontSize', 'density', 'deviceProfile', 'direction',
+        'createdAt', 'updatedAt'
+      ])
+      && data.uid == userId
+      && isValidId(data.uid)
+      && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 100
+      && data.email is string && data.email.size() >= 3 && data.email.size() <= 150
+      && (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() <= 500))
+      && data.themePreset in ['claude-light', 'claude-dark', 'midnight', 'sand']
+      && data.accentColor in ['terracotta', 'hydrogen', 'emerald', 'plum']
+      && data.fontFamily in ['editorial', 'modern', 'technical']
+      && data.fontSize in ['sm', 'md', 'lg']
+      && data.density in ['comfortable', 'compact']
+      && data.deviceProfile in ['desktop-50b', 'mobile-50m']
+      && data.direction in ['rtl', 'ltr']
+      && data.createdAt is timestamp
+      && data.updatedAt is timestamp;
+    }
+
+    function isValidChatThread(data, userId) {
+      return data.keys().hasAll(['ownerId', 'title', 'deviceProfile', 'createdAt', 'updatedAt'])
+      && data.keys().hasOnly(['ownerId', 'title', 'deviceProfile', 'activeTopic', 'createdAt', 'updatedAt'])
+      && data.ownerId == userId
+      && isValidId(data.ownerId)
+      && data.title is string && data.title.size() >= 1 && data.title.size() <= 140
+      && data.deviceProfile in ['desktop-50b', 'mobile-50m']
+      && (!('activeTopic' in data) || (data.activeTopic is string && data.activeTopic.size() <= 80))
+      && data.createdAt is timestamp
+      && data.updatedAt is timestamp;
+    }
+
+    function isValidChatMessage(data, userId, chatId) {
+      return data.keys().hasAll(['ownerId', 'chatId', 'role', 'content', 'createdAt'])
+      && data.keys().hasOnly(['ownerId', 'chatId', 'role', 'content', 'dialect', 'kbTier', 'createdAt'])
+      && data.ownerId == userId
+      && isValidId(data.ownerId)
+      && data.chatId == chatId
+      && isValidId(data.chatId)
+      && data.role in ['user', 'assistant']
+      && data.content is string && data.content.size() >= 1 && data.content.size() <= 16000
+      && (!('dialect' in data) || (data.dialect is string && data.dialect.size() <= 64))
+      && (!('kbTier' in data) || (data.kbTier in ['desktop-50b', 'mobile-50m']))
+      && data.createdAt is timestamp;
+    }
+
+    // Users Collection (PII & UI Customization Isolated to Owner)
+    match /users/{userId} {
+      allow get: if isOwner(userId) && isValidId(userId);
+      allow list: if false;
+      allow create: if isOwner(userId)
+        && isValidId(userId)
+        && isValidUserProfile(incoming(), userId)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isOwner(userId)
+        && isValidId(userId)
+        && isValidUserProfile(incoming(), userId)
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'displayName', 'email', 'photoURL', 'themePreset', 'accentColor',
+          'fontFamily', 'fontSize', 'density', 'deviceProfile', 'direction', 'updatedAt'
+        ]);
+      allow delete: if false;
+
+      // User Chats Subcollection (Master Gate checks owner)
+      match /chats/{chatId} {
+        allow get: if isOwner(userId) && isValidId(userId) && isValidId(chatId)
+          && existing().ownerId == request.auth.uid;
+        allow list: if isOwner(userId) && isValidId(userId)
+          && resource.data.ownerId == request.auth.uid;
+        allow create: if isOwner(userId)
+          && isValidId(userId)
+          && isValidId(chatId)
+          && isValidChatThread(incoming(), userId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time;
+        allow update: if isOwner(userId)
+          && isValidId(userId)
+          && isValidId(chatId)
+          && isValidChatThread(incoming(), userId)
+          && existing().ownerId == request.auth.uid
+          && incoming().ownerId == existing().ownerId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'title', 'deviceProfile', 'activeTopic', 'updatedAt'
+          ]);
+        allow delete: if isOwner(userId) && isValidId(userId) && isValidId(chatId)
+          && existing().ownerId == request.auth.uid;
+
+        // Chat Messages Subcollection (Master Gate reads parent chat doc)
+        match /messages/{messageId} {
+          allow get: if isOwner(userId) && isValidId(userId) && isValidId(chatId) && isValidId(messageId)
+            && existing().ownerId == request.auth.uid;
+          allow list: if isOwner(userId) && isValidId(userId) && isValidId(chatId)
+            && resource.data.ownerId == request.auth.uid;
+          allow create: if isOwner(userId)
+            && isValidId(userId)
+            && isValidId(chatId)
+            && isValidId(messageId)
+            && get(/databases/$(database)/documents/users/$(userId)/chats/$(chatId)).data.ownerId == request.auth.uid
+            && isValidChatMessage(incoming(), userId, chatId)
+            && incoming().createdAt == request.time;
+          allow update: if false;
+          allow delete: if isOwner(userId) && isValidId(userId) && isValidId(chatId) && isValidId(messageId)
+            && existing().ownerId == request.auth.uid;
+        }
+      }
+    }
+  }
+}

@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import {
+  ChevronDown,
   FileCode2,
   Folder,
   Mic,
@@ -9,13 +10,20 @@ import {
   Send,
   Terminal,
   X,
-  ChevronDown,
 } from "lucide-react";
 
 interface ToolStep {
   tool: string;
   arguments: string;
   output: string;
+}
+
+interface ActiveContext {
+  lastFile: string | null;
+  lastDomain: string;
+  lastDomainObj?: { nameEn: string; nameAr: string; fields: string[] };
+  lastLanguage?: string;
+  turnCount: number;
 }
 
 interface InferencePrediction {
@@ -25,6 +33,10 @@ interface InferencePrediction {
   dialectHint: string;
   wasmInferenceMs: number;
   wasmFlops: number;
+  slots?: {
+    usedContextMemory?: boolean;
+    resolvedReferences?: string[];
+  };
 }
 
 interface ChatMessage {
@@ -32,6 +44,9 @@ interface ChatMessage {
   role: "user" | "bot";
   content: string;
   steps?: ToolStep[];
+  planSteps?: string[];
+  suggestedFollowUps?: Array<{ label: string; prompt: string }>;
+  activeContext?: ActiveContext;
   prediction?: InferencePrediction;
   error?: string;
 }
@@ -43,17 +58,24 @@ interface ParsedFileEntry {
 
 const DIALECT_VOICES = [
   { code: "ar-EG", label: "مصري" },
-  { code: "ar-SA", label: "سعودي / خليجي" },
+  { code: "ar-SA", label: "خليجي" },
   { code: "ar-LB", label: "شامي" },
   { code: "ar-MA", label: "مغربي" },
-  { code: "ar-IQ", label: "عراقي" },
+];
+
+const SCOPE_OPTIONS = [
+  { id: "auto", label: "تلقائي (فهم السياق)" },
+  { id: "create_fastapi_api", label: "نطاق: بناء API" },
+  { id: "create_database_app", label: "نطاق: SQLite" },
+  { id: "create_auth_security", label: "نطاق: الأمان" },
+  { id: "debug_and_fix", label: "نطاق: فحص الأخطاء" },
 ];
 
 const QUICK_PROMPTS = [
-  "عايزك تعملي API لادارة المهام وتختبره",
-  "سويلي خوارزمية فرز سريعة واختبرها",
-  "وريني الملفات اللي في المشروع",
-  "اكتب نواة C++ سريعة تنجز 50 مليون عملية بالثانية",
+  "اعملي API للمنتجات واختبره",
+  "اعملي قاعدة بيانات SQLite لنفس المجال واختبرها",
+  "اقراه ووريني مكتوب فيه ايه",
+  "افحص ملفات المشروع وشوف لو فيها اخطاء",
 ];
 
 function renderFormattedContent(text: string) {
@@ -67,13 +89,17 @@ function renderFormattedContent(text: string) {
         <pre
           key={idx}
           dir="ltr"
-          className="my-2.5 overflow-x-auto rounded-lg border border-white/10 bg-[#070A10] p-3 text-left font-mono text-xs leading-relaxed text-slate-200"
+          className="my-2.5 overflow-x-auto rounded-xl border p-3 text-left font-mono text-xs leading-relaxed"
+          style={{
+            backgroundColor: "var(--nawa-code-bg)",
+            color: "var(--nawa-code-text)",
+            borderColor: "var(--nawa-border)",
+          }}
         >
           <code>{codeBody}</code>
         </pre>
       );
     }
-    // Inline code and bold handling
     const lines = part.split("\n");
     return (
       <span key={idx} className="whitespace-pre-wrap">
@@ -87,7 +113,11 @@ function renderFormattedContent(text: string) {
                     <code
                       key={sIdx}
                       dir="ltr"
-                      className="mx-0.5 inline-block rounded bg-slate-800/90 px-1.5 py-0.5 font-mono text-xs text-blue-300"
+                      className="mx-0.5 inline-block rounded px-1.5 py-0.5 font-mono text-xs"
+                      style={{
+                        backgroundColor: "var(--nawa-elevated)",
+                        color: "var(--nawa-accent)",
+                      }}
                     >
                       {seg.slice(1, -1)}
                     </code>
@@ -95,7 +125,7 @@ function renderFormattedContent(text: string) {
                 }
                 if (seg.startsWith("**") && seg.endsWith("**")) {
                   return (
-                    <strong key={sIdx} className="font-semibold text-white">
+                    <strong key={sIdx} className="font-semibold">
                       {seg.slice(2, -2)}
                     </strong>
                   );
@@ -115,12 +145,14 @@ export default function AgentWorkspaceView() {
   const [sessionId] = useState(() => "session_" + Math.random().toString(36).slice(2, 9));
   const [files, setFiles] = useState<ParsedFileEntry[]>([]);
   const [filesLoading, setFilesLoading] = useState(true);
+  const [activeContext, setActiveContext] = useState<ActiveContext | null>(null);
+  const [taskScope, setTaskScope] = useState("auto");
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       id: "welcome",
       role: "bot",
       content:
-        "أهلاً بك في **نواة Studio**.\nهذا الوكيل يعمل بالكامل على نموذج **NawaCore-50M** المدمج محلياً عبر WebAssembly (بدون استدعاء أي نموذج خارجي). اكتب طلبك بأي لهجة عربية وسيتم تنفيذ الأدوات واختبار الكود فعلياً داخل `workspace/`.",
+        "أهلاً بك في **بيئة التطوير السياقية (IDE Agent)**.\nجرب بناء API للمنتجات ثم اطلب: «اعملي قاعدة بيانات SQLite لنفس المجال» أو «اقراه».",
     },
   ]);
   const [input, setInput] = useState("");
@@ -179,31 +211,33 @@ export default function AgentWorkspaceView() {
     if (!text || sending) return;
     if (!overrideText) setInput("");
 
-    const userMsg: ChatMessage = {
-      id: "u_" + Date.now(),
-      role: "user",
-      content: text,
-    };
-    setMessages((prev) => [...prev, userMsg]);
+    setMessages((prev) => [...prev, { id: "u_" + Date.now(), role: "user", content: text }]);
     setSending(true);
 
     try {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text, session_id: sessionId }),
+        body: JSON.stringify({ message: text, session_id: sessionId, taskScope }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || "تعذر تنفيذ الطلب");
 
-      const botMsg: ChatMessage = {
-        id: "b_" + Date.now(),
-        role: "bot",
-        content: data.reply,
-        steps: data.steps,
-        prediction: data.prediction,
-      };
-      setMessages((prev) => [...prev, botMsg]);
+      if (data.activeContext) setActiveContext(data.activeContext);
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: "b_" + Date.now(),
+          role: "bot",
+          content: data.reply,
+          steps: data.steps,
+          planSteps: data.planSteps,
+          suggestedFollowUps: data.suggestedFollowUps,
+          activeContext: data.activeContext,
+          prediction: data.prediction,
+        },
+      ]);
       loadFiles();
     } catch (err) {
       setMessages((prev) => [
@@ -226,13 +260,8 @@ export default function AgentWorkspaceView() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ session_id: sessionId }),
     });
-    setMessages([
-      {
-        id: "reset_" + Date.now(),
-        role: "bot",
-        content: "تم بدء جلسة برمجية جديدة مع النموذج المحلي.",
-      },
-    ]);
+    setActiveContext(null);
+    setMessages([{ id: "reset_" + Date.now(), role: "bot", content: "تم تصفير الذاكرة السياقية." }]);
   };
 
   const toggleVoice = () => {
@@ -255,18 +284,7 @@ export default function AgentWorkspaceView() {
       };
     };
     const SR = win.SpeechRecognition || win.webkitSpeechRecognition;
-    if (!SR) {
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: "sr_" + Date.now(),
-          role: "bot",
-          content: "",
-          error: "التعرف الصوتي المباشر يتطلب متصفح Chrome أو Edge.",
-        },
-      ]);
-      return;
-    }
+    if (!SR) return;
     const rec = new SR();
     rec.lang = dialectVoice;
     rec.interimResults = false;
@@ -281,26 +299,41 @@ export default function AgentWorkspaceView() {
   };
 
   return (
-    <div className="grid h-[calc(100vh-65px)] grid-cols-1 lg:grid-cols-[290px_1fr]">
-      {/* Workspace File Explorer Sidebar */}
-      <aside className="flex flex-col border-b border-white/10 bg-[#111827] lg:border-b-0 lg:border-l">
-        <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
-          <h2 className="text-sm font-semibold text-slate-200">ملفات بيئة العمل</h2>
+    <div className="grid h-full grid-cols-1 lg:grid-cols-[270px_1fr]">
+      {/* Workspace File Explorer */}
+      <aside
+        className="flex flex-col border-b lg:border-b-0 lg:border-l"
+        style={{
+          backgroundColor: "var(--nawa-surface)",
+          borderColor: "var(--nawa-border)",
+        }}
+      >
+        <div
+          className="flex items-center justify-between border-b px-4 py-3"
+          style={{ borderColor: "var(--nawa-border)" }}
+        >
+          <h2 className="text-sm font-semibold">ملفات بيئة العمل</h2>
           <div className="flex items-center gap-1.5">
             <button
               type="button"
               onClick={loadFiles}
-              className="inline-flex h-8 items-center gap-1.5 rounded-md border border-white/10 bg-[#0B0F17] px-2.5 text-xs font-medium text-slate-300 transition-colors hover:border-white/20 hover:text-white whitespace-nowrap shrink-0"
-              title="تحديث الملفات"
+              className="inline-flex h-8 items-center gap-1 rounded-lg border px-2 text-xs font-medium"
+              style={{
+                backgroundColor: "var(--nawa-elevated)",
+                borderColor: "var(--nawa-border)",
+              }}
             >
               <RefreshCw className="h-3.5 w-3.5" />
-              <span>تحديث</span>
             </button>
             <button
               type="button"
               onClick={handleReset}
-              className="inline-flex h-8 items-center gap-1.5 rounded-md border border-white/10 bg-[#0B0F17] px-2.5 text-xs font-medium text-slate-300 transition-colors hover:border-white/20 hover:text-white whitespace-nowrap shrink-0"
-              title="جلسة جديدة"
+              className="inline-flex h-8 items-center gap-1 rounded-lg border px-2 text-xs font-medium"
+              style={{
+                backgroundColor: "var(--nawa-elevated)",
+                borderColor: "var(--nawa-border)",
+              }}
+              title="تصفير السياق"
             >
               <RotateCcw className="h-3.5 w-3.5" />
             </button>
@@ -310,12 +343,13 @@ export default function AgentWorkspaceView() {
         <div dir="ltr" className="flex-1 overflow-y-auto p-3 text-left font-mono text-xs">
           {filesLoading ? (
             <div className="space-y-2 p-2">
-              <div className="h-6 animate-pulse rounded bg-white/5" />
-              <div className="h-6 animate-pulse rounded bg-white/5" />
-              <div className="h-6 animate-pulse rounded bg-white/5" />
+              <div className="h-6 rounded" style={{ backgroundColor: "var(--nawa-elevated)" }} />
+              <div className="h-6 rounded" style={{ backgroundColor: "var(--nawa-elevated)" }} />
             </div>
           ) : files.length === 0 ? (
-            <p className="p-2 text-slate-500">workspace/ is empty</p>
+            <p className="p-2" style={{ color: "var(--nawa-muted)" }}>
+              workspace/ is empty
+            </p>
           ) : (
             <div className="space-y-0.5">
               {files.map((item) =>
@@ -324,16 +358,17 @@ export default function AgentWorkspaceView() {
                     key={item.path}
                     type="button"
                     onClick={() => openFile(item.path)}
-                    className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-slate-300 transition-colors hover:bg-white/5 hover:text-blue-300"
+                    className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left transition-colors"
+                    style={{
+                      backgroundColor: activeContext?.lastFile === item.path ? "var(--nawa-accent-soft)" : "transparent",
+                      color: activeContext?.lastFile === item.path ? "var(--nawa-accent)" : "var(--nawa-text)",
+                    }}
                   >
-                    <FileCode2 className="h-3.5 w-3.5 shrink-0 text-blue-400" />
+                    <FileCode2 className="h-3.5 w-3.5 shrink-0" style={{ color: "var(--nawa-accent)" }} />
                     <span className="truncate">{item.path}</span>
                   </button>
                 ) : (
-                  <div
-                    key={item.path}
-                    className="flex items-center gap-2 px-2.5 py-1.5 text-slate-500"
-                  >
+                  <div key={item.path} className="flex items-center gap-2 px-2.5 py-1.5" style={{ color: "var(--nawa-muted)" }}>
                     <Folder className="h-3.5 w-3.5 shrink-0" />
                     <span className="truncate">{item.path}</span>
                   </div>
@@ -342,57 +377,91 @@ export default function AgentWorkspaceView() {
             </div>
           )}
         </div>
-
-        <div className="border-t border-white/10 px-4 py-3 text-xs text-slate-400">
-          المسار المعزول: <span className="font-mono text-slate-300">workspace/</span>
-        </div>
       </aside>
 
       {/* Main Agent Conversation Area */}
-      <section className="flex flex-col overflow-hidden bg-[#0B0F17]">
+      <section className="flex flex-col overflow-hidden">
+        <div
+          className="flex flex-wrap items-center justify-between gap-3 border-b px-5 py-2.5 text-xs"
+          style={{
+            backgroundColor: "var(--nawa-surface)",
+            borderColor: "var(--nawa-border)",
+            color: "var(--nawa-muted)",
+          }}
+        >
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="font-semibold" style={{ color: "var(--nawa-text)" }}>
+              الذاكرة السياقية:
+            </span>
+            <span>المجال {activeContext?.lastDomainObj?.nameAr || "المهام"}</span>
+            <span aria-hidden="true">·</span>
+            <span>اللغة {activeContext?.lastLanguage || "python"}</span>
+            <span aria-hidden="true">·</span>
+            <span>
+              الملف:{" "}
+              <span className="font-mono" style={{ color: "var(--nawa-accent)" }} dir="ltr">
+                {activeContext?.lastFile || "لا يوجد"}
+              </span>
+            </span>
+          </div>
+          {activeContext && (
+            <button type="button" onClick={handleReset} className="text-xs font-medium hover:underline">
+              تصفير السياق
+            </button>
+          )}
+        </div>
+
         <div className="flex-1 overflow-y-auto p-5 lg:p-6">
           <div className="mx-auto flex max-w-4xl flex-col gap-4">
-            {messages.map((msg) => (
+            {messages.map((msg, msgIdx) => (
               <div
                 key={msg.id}
-                className={`rounded-xl border p-4 text-sm leading-relaxed ${
-                  msg.role === "user"
-                    ? "self-start border-blue-500/30 bg-[#151E2E] text-slate-100 md:max-w-[82%]"
-                    : "self-end w-full border-white/10 bg-[#111827] text-slate-200"
+                className={`rounded-2xl border p-4 text-sm leading-relaxed ${
+                  msg.role === "user" ? "self-start md:max-w-[82%]" : "self-end w-full"
                 }`}
+                style={{
+                  backgroundColor: msg.role === "user" ? "var(--nawa-user-bubble)" : "var(--nawa-surface)",
+                  borderColor: "var(--nawa-border)",
+                }}
               >
                 {msg.prediction && (
-                  <div className="mb-3 flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-white/10 pb-2 text-xs text-slate-400">
+                  <div
+                    className="mb-3 flex flex-wrap items-center gap-x-2 gap-y-1 border-b pb-2 text-xs"
+                    style={{ borderColor: "var(--nawa-border)", color: "var(--nawa-muted)" }}
+                  >
                     <span>اللهجة: {msg.prediction.dialectHint}</span>
                     <span aria-hidden="true">·</span>
                     <span>النية: {msg.prediction.labelAr}</span>
                     <span aria-hidden="true">·</span>
-                    <span className="font-mono tabular-nums">
-                      الثقة {(msg.prediction.confidence * 100).toFixed(1)}%
-                    </span>
-                    <span aria-hidden="true">·</span>
-                    <span className="font-mono tabular-nums">
-                      WASM {msg.prediction.wasmInferenceMs} ms ({msg.prediction.wasmFlops.toLocaleString()} FLOPs)
-                    </span>
+                    <span className="font-mono tabular-nums">WASM {msg.prediction.wasmInferenceMs} ms</span>
                   </div>
                 )}
 
                 {msg.steps && msg.steps.length > 0 && (
-                  <details className="mb-3 rounded-lg border border-white/10 bg-[#0B0F17] px-3 py-2 text-xs">
-                    <summary className="flex cursor-pointer items-center justify-between font-medium text-emerald-400">
+                  <details
+                    className="mb-3 rounded-xl border px-3 py-2 text-xs"
+                    style={{
+                      backgroundColor: "var(--nawa-elevated)",
+                      borderColor: "var(--nawa-border)",
+                    }}
+                  >
+                    <summary className="flex cursor-pointer items-center justify-between font-medium">
                       <span className="inline-flex items-center gap-2">
-                        <Terminal className="h-3.5 w-3.5" />
-                        <span>تم تنفيذ {msg.steps.length} خطوات فعلية في بيئة العمل</span>
+                        <Terminal className="h-3.5 w-3.5" style={{ color: "var(--nawa-accent)" }} />
+                        <span>تم تنفيذ {msg.steps.length} خطوات فعلية</span>
                       </span>
                       <ChevronDown className="h-3.5 w-3.5" />
                     </summary>
-                    <div className="mt-2.5 space-y-2.5 border-t border-white/10 pt-2.5" dir="ltr">
+                    <div className="mt-2.5 space-y-2 border-t pt-2" style={{ borderColor: "var(--nawa-border)" }} dir="ltr">
                       {msg.steps.map((step, i) => (
                         <div key={i} className="text-left">
-                          <div className="font-mono text-xs font-semibold text-blue-300">
+                          <div className="font-mono text-xs font-semibold" style={{ color: "var(--nawa-accent)" }}>
                             {step.tool}({step.arguments})
                           </div>
-                          <pre className="mt-1 max-h-48 overflow-auto rounded bg-[#070A10] p-2 font-mono text-[11px] text-slate-300">
+                          <pre
+                            className="mt-1 max-h-40 overflow-auto rounded-lg p-2 font-mono text-[11px]"
+                            style={{ backgroundColor: "var(--nawa-code-bg)", color: "var(--nawa-code-text)" }}
+                          >
                             {step.output}
                           </pre>
                         </div>
@@ -401,25 +470,52 @@ export default function AgentWorkspaceView() {
                   </details>
                 )}
 
-                {msg.error ? (
-                  <div className="text-sm text-red-400">{msg.error}</div>
-                ) : (
-                  <div>{renderFormattedContent(msg.content)}</div>
+                {msg.error ? <div className="text-sm text-red-500">{msg.error}</div> : <div>{renderFormattedContent(msg.content)}</div>}
+
+                {msg.role === "bot" && msgIdx === messages.length - 1 && msg.suggestedFollowUps && msg.suggestedFollowUps.length > 0 && (
+                  <div className="mt-3 flex flex-wrap items-center gap-2 border-t pt-3" style={{ borderColor: "var(--nawa-border)" }}>
+                    {msg.suggestedFollowUps.map((f) => (
+                      <button
+                        key={f.label}
+                        type="button"
+                        disabled={sending}
+                        onClick={() => sendMessage(f.prompt)}
+                        className="rounded-lg border px-2.5 py-1 text-xs font-medium"
+                        style={{
+                          backgroundColor: "var(--nawa-elevated)",
+                          borderColor: "var(--nawa-border)",
+                        }}
+                      >
+                        {f.label}
+                      </button>
+                    ))}
+                  </div>
                 )}
               </div>
             ))}
-
             {sending && (
-              <div className="self-end w-full rounded-xl border border-white/10 bg-[#111827] p-4 text-sm text-slate-400">
-                جاري تحليل اللهجة عبر نواة WebAssembly وتنفيذ أدوات بيئة العمل...
+              <div
+                className="w-full rounded-2xl border p-4 text-sm"
+                style={{
+                  backgroundColor: "var(--nawa-surface)",
+                  borderColor: "var(--nawa-border)",
+                  color: "var(--nawa-muted)",
+                }}
+              >
+                جاري ربط السياق وتنفيذ الأدوات...
               </div>
             )}
             <div ref={bottomRef} />
           </div>
         </div>
 
-        {/* Quick Dialect Suggestions + Composer */}
-        <div className="border-t border-white/10 bg-[#111827] px-5 py-3.5">
+        <div
+          className="border-t px-5 py-3.5"
+          style={{
+            backgroundColor: "var(--nawa-surface)",
+            borderColor: "var(--nawa-border)",
+          }}
+        >
           <div className="mx-auto max-w-4xl">
             <div className="mb-2.5 flex flex-wrap items-center gap-2">
               {QUICK_PROMPTS.map((q) => (
@@ -428,7 +524,11 @@ export default function AgentWorkspaceView() {
                   type="button"
                   disabled={sending}
                   onClick={() => sendMessage(q)}
-                  className="rounded-md border border-white/10 bg-[#0B0F17] px-2.5 py-1 text-xs text-slate-300 transition-colors hover:border-blue-500/40 hover:text-white disabled:opacity-50"
+                  className="rounded-lg border px-2.5 py-1 text-xs transition-colors"
+                  style={{
+                    backgroundColor: "var(--nawa-elevated)",
+                    borderColor: "var(--nawa-border)",
+                  }}
                 >
                   {q}
                 </button>
@@ -438,27 +538,30 @@ export default function AgentWorkspaceView() {
             <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
               <div className="flex items-center gap-2">
                 <select
-                  aria-label="لهجة الإدخال الصوتي"
-                  value={dialectVoice}
-                  onChange={(e) => setDialectVoice(e.target.value)}
-                  className="h-11 rounded-lg border border-white/10 bg-[#0B0F17] px-3 text-xs text-slate-200 focus:border-blue-500 focus:outline-none"
+                  aria-label="نطاق المهمة"
+                  value={taskScope}
+                  onChange={(e) => setTaskScope(e.target.value)}
+                  className="h-11 rounded-xl border px-3 text-xs focus:outline-none"
+                  style={{
+                    backgroundColor: "var(--nawa-elevated)",
+                    borderColor: "var(--nawa-border)",
+                    color: "var(--nawa-text)",
+                  }}
                 >
-                  {DIALECT_VOICES.map((d) => (
-                    <option key={d.code} value={d.code}>
-                      صوت: {d.label}
+                  {SCOPE_OPTIONS.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.label}
                     </option>
                   ))}
                 </select>
-
                 <button
                   type="button"
                   onClick={toggleVoice}
-                  className={`inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border transition-colors ${
-                    listening
-                      ? "border-red-500 bg-red-500/15 text-red-400"
-                      : "border-white/10 bg-[#0B0F17] text-slate-300 hover:border-white/25 hover:text-white"
-                  }`}
-                  title="تحدث باللهجة العربية"
+                  className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border"
+                  style={{
+                    backgroundColor: listening ? "rgba(220,38,38,0.12)" : "var(--nawa-elevated)",
+                    borderColor: listening ? "#DC2626" : "var(--nawa-border)",
+                  }}
                 >
                   {listening ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
                 </button>
@@ -474,15 +577,21 @@ export default function AgentWorkspaceView() {
                     sendMessage();
                   }
                 }}
-                placeholder="اكتب طلبك بأي لهجة عربية... مثال: عايزك تعملي API لادارة المهام وتختبره"
-                className="min-h-[44px] max-h-36 flex-1 resize-none rounded-lg border border-white/10 bg-[#0B0F17] px-3.5 py-2.5 text-sm text-slate-100 placeholder:text-slate-500 focus:border-blue-500 focus:outline-none"
+                placeholder="اكتب أمرك البرمجي بأي لهجة عربية..."
+                className="min-h-[44px] max-h-36 flex-1 resize-none rounded-xl border px-3.5 py-2.5 text-sm focus:outline-none"
+                style={{
+                  backgroundColor: "var(--nawa-elevated)",
+                  borderColor: "var(--nawa-border)",
+                  color: "var(--nawa-text)",
+                }}
               />
 
               <button
                 type="button"
                 disabled={sending || !input.trim()}
                 onClick={() => sendMessage()}
-                className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-blue-600 px-5 text-sm font-semibold text-white transition-colors hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50 whitespace-nowrap shrink-0"
+                className="inline-flex h-11 items-center justify-center gap-2 rounded-xl px-5 text-sm font-semibold text-white disabled:opacity-50 whitespace-nowrap shrink-0"
+                style={{ backgroundColor: "var(--nawa-accent)" }}
               >
                 <Send className="h-4 w-4" />
                 <span>إرسال</span>
@@ -492,21 +601,27 @@ export default function AgentWorkspaceView() {
         </div>
       </section>
 
-      {/* File Content Preview Modal */}
       {modalFile && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
           onClick={(e) => {
             if (e.target === e.currentTarget) setModalFile(null);
           }}
         >
-          <div className="flex max-h-[85vh] w-full max-w-4xl flex-col rounded-xl border border-white/15 bg-[#111827]">
-            <div className="flex items-center justify-between border-b border-white/10 px-4 py-3" dir="ltr">
-              <span className="font-mono text-sm font-medium text-slate-200">{modalFile.path}</span>
+          <div
+            className="flex max-h-[85vh] w-full max-w-4xl flex-col rounded-2xl border"
+            style={{
+              backgroundColor: "var(--nawa-surface)",
+              borderColor: "var(--nawa-border)",
+            }}
+          >
+            <div className="flex items-center justify-between border-b px-4 py-3" style={{ borderColor: "var(--nawa-border)" }} dir="ltr">
+              <span className="font-mono text-sm font-medium">{modalFile.path}</span>
               <button
                 type="button"
                 onClick={() => setModalFile(null)}
-                className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-white/10 text-slate-300 hover:bg-white/5 hover:text-white"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-lg border"
+                style={{ borderColor: "var(--nawa-border)" }}
                 aria-label="إغلاق"
               >
                 <X className="h-4 w-4" />
@@ -514,7 +629,11 @@ export default function AgentWorkspaceView() {
             </div>
             <pre
               dir="ltr"
-              className="flex-1 overflow-auto bg-[#070A10] p-4 text-left font-mono text-xs leading-relaxed text-slate-200"
+              className="flex-1 overflow-auto p-4 text-left font-mono text-xs leading-relaxed"
+              style={{
+                backgroundColor: "var(--nawa-code-bg)",
+                color: "var(--nawa-code-text)",
+              }}
             >
               {modalFile.content}
             </pre>

@@ -287,16 +287,35 @@ Java_com_nawa_agent_NawaEngineBridge_benchmark50M(JNIEnv* env, jobject /* thiz *
 `;
 }
 
-export function buildAndroidApkKitEntries(weightsBin: Uint8Array): ZipEntryInput[] {
+export function buildAndroidApkKitEntries(
+  weightsBin: Uint8Array,
+  adOptions?: { adMobAppId?: string; adMobUnitId?: string }
+): ZipEntryInput[] {
+  const safeIdRe = /^ca-app-pub-[0-9]+[~\/][0-9]+$/;
+  const adMobAppId =
+    adOptions?.adMobAppId && safeIdRe.test(adOptions.adMobAppId.trim())
+      ? adOptions.adMobAppId.trim()
+      : "ca-app-pub-3940256099942544~3347511713";
+  const adMobUnitId =
+    adOptions?.adMobUnitId && safeIdRe.test(adOptions.adMobUnitId.trim())
+      ? adOptions.adMobUnitId.trim()
+      : "ca-app-pub-3940256099942544/9257395921";
+
   const manifest = `<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.nawa.agent">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <application
+        android:name=".NawaApplication"
         android:allowBackup="true"
         android:label="نواة AI 50M"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
+        <meta-data
+            android:name="com.google.android.gms.ads.APPLICATION_ID"
+            android:value="${adMobAppId}" />
         <activity
             android:name=".MainActivity"
             android:exported="true">
@@ -341,6 +360,11 @@ android {
         }
     }
 }
+
+dependencies {
+    implementation("com.google.android.gms:play-services-ads:23.3.0")
+    implementation("androidx.lifecycle:lifecycle-process:2.8.4")
+}
 `;
 
   const cmake = `cmake_minimum_required(VERSION 3.18.1)
@@ -361,6 +385,131 @@ object NawaEngineBridge {
 }
 `;
 
+  const appOpenAdManagerKt = `package com.nawa.agent
+
+import android.app.Activity
+import android.content.Context
+import com.google.android.gms.ads.AdError
+import com.google.android.gms.ads.AdRequest
+import com.google.android.gms.ads.FullScreenContentCallback
+import com.google.android.gms.ads.LoadAdError
+import com.google.android.gms.ads.appopen.AppOpenAd
+import java.util.Date
+
+class AppOpenAdManager {
+    private var appOpenAd: AppOpenAd? = null
+    private var isLoadingAd = false
+    var isShowingAd = false
+    private var loadTime: Long = 0
+
+    companion object {
+        // Configured AdMob App Open Ad Unit ID
+        private const val AD_UNIT_ID = "${adMobUnitId}"
+    }
+
+    fun loadAd(context: Context) {
+        if (isLoadingAd || isAdAvailable()) return
+        isLoadingAd = true
+        val request = AdRequest.Builder().build()
+        AppOpenAd.load(
+            context,
+            AD_UNIT_ID,
+            request,
+            object : AppOpenAd.AppOpenAdLoadCallback() {
+                override fun onAdLoaded(ad: AppOpenAd) {
+                    appOpenAd = ad
+                    isLoadingAd = false
+                    loadTime = Date().time
+                }
+
+                override fun onAdFailedToLoad(loadAdError: LoadAdError) {
+                    isLoadingAd = false
+                }
+            }
+        )
+    }
+
+    private fun wasLoadTimeLessThanNHoursAgo(numHours: Long): Boolean {
+        val dateDifference = Date().time - loadTime
+        val numMilliSecondsPerHour: Long = 3600000
+        return dateDifference < numMilliSecondsPerHour * numHours
+    }
+
+    private fun isAdAvailable(): Boolean {
+        return appOpenAd != null && wasLoadTimeLessThanNHoursAgo(4)
+    }
+
+    fun showAdIfAvailable(activity: Activity, onComplete: () -> Unit = {}) {
+        if (isShowingAd) return
+        if (!isAdAvailable()) {
+            onComplete()
+            loadAd(activity)
+            return
+        }
+        appOpenAd?.fullScreenContentCallback = object : FullScreenContentCallback() {
+            override fun onAdDismissedFullScreenContent() {
+                appOpenAd = null
+                isShowingAd = false
+                onComplete()
+                loadAd(activity)
+            }
+
+            override fun onAdFailedToShowFullScreenContent(adError: AdError) {
+                appOpenAd = null
+                isShowingAd = false
+                onComplete()
+                loadAd(activity)
+            }
+
+            override fun onAdShowedFullScreenContent() {
+                isShowingAd = true
+            }
+        }
+        isShowingAd = true
+        appOpenAd?.show(activity)
+    }
+}
+`;
+
+  const nawaApplicationKt = `package com.nawa.agent
+
+import android.app.Activity
+import android.app.Application
+import android.os.Bundle
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.ProcessLifecycleOwner
+import com.google.android.gms.ads.MobileAds
+
+class NawaApplication : Application(), Application.ActivityLifecycleCallbacks, DefaultLifecycleObserver {
+    private lateinit var appOpenAdManager: AppOpenAdManager
+    private var currentActivity: Activity? = null
+
+    override fun onCreate() {
+        super.onCreate()
+        registerActivityLifecycleCallbacks(this)
+        MobileAds.initialize(this) {}
+        ProcessLifecycleOwner.get().lifecycle.addObserver(this)
+        appOpenAdManager = AppOpenAdManager().apply { loadAd(this@NawaApplication) }
+    }
+
+    override fun onStart(owner: LifecycleOwner) {
+        currentActivity?.let { appOpenAdManager.showAdIfAvailable(it) }
+    }
+
+    override fun onActivityStarted(activity: Activity) {
+        if (!appOpenAdManager.isShowingAd) currentActivity = activity
+    }
+
+    override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {}
+    override fun onActivityResumed(activity: Activity) {}
+    override fun onActivityPaused(activity: Activity) {}
+    override fun onActivityStopped(activity: Activity) {}
+    override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) {}
+    override fun onActivityDestroyed(activity: Activity) {}
+}
+`;
+
   const mainActivityKt = `package com.nawa.agent
 
 import android.app.Activity
@@ -377,7 +526,7 @@ class MainActivity : Activity() {
             setPadding(48, 64, 48, 48)
         }
         val title = TextView(this).apply {
-            text = "نواة NawaCore-50M — محرك ARM64 NEON المحلي"
+            text = "نواة NawaCore-50M — محرك ARM64 NEON + إعلانات فتح التطبيق"
             textSize = 20f
         }
         val output = TextView(this).apply {
@@ -399,12 +548,12 @@ class MainActivity : Activity() {
 }
 `;
 
-  const readme = `# NawaCore-50M Android APK Build Kit (ARM64 NEON + JNI)
-هذا المشروع يحتوي على نواة C++ محلية \`libnawa_engine.so\` مهيأة بمعالجات ARM64 NEON SIMD بالإضافة إلى أوزان النموذج المدربة \`nawa_weights.bin\`.
+  const readme = `# NawaCore-50M Android APK Build Kit (ARM64 NEON + AdMob App Open Ads)
+هذا المشروع يحتوي على نواة C++ محلية \`libnawa_engine.so\` مهيأة بمعالجات ARM64 NEON SIMD بالإضافة إلى أوزان النموذج المدربة \`nawa_weights.bin\` ونظام إعلانات فتح التطبيق (\`AppOpenAdManager.kt\` + \`NawaApplication.kt\`).
 
 ## خطوات استخراج ملف APK
-1. افتح المجلد داخل Android Studio (مع تثبيت NDK و CMake).
-2. أو من سطر الأوامر: \`./gradlew assembleRelease\`
+1. استبدل معرّفات AdMob التجريبية في \`AndroidManifest.xml\` و \`AppOpenAdManager.kt\` بمعرّفات حسابك الحقيقية عند النشر.
+2. افتح المجلد داخل Android Studio (مع تثبيت NDK و CMake) أو نفّذ: \`./gradlew assembleRelease\`
 3. ستجد ملف التطبيق الجاهز في: \`app/build/outputs/apk/release/app-release.apk\`
 `;
 
@@ -416,6 +565,8 @@ class MainActivity : Activity() {
     { path: "app/src/main/cpp/CMakeLists.txt", content: cmake },
     { path: "app/src/main/cpp/nawa_neon_jni.cpp", content: generateAndroidNeonCpp() },
     { path: "app/src/main/java/com/nawa/agent/NawaEngineBridge.kt", content: bridgeKt },
+    { path: "app/src/main/java/com/nawa/agent/AppOpenAdManager.kt", content: appOpenAdManagerKt },
+    { path: "app/src/main/java/com/nawa/agent/NawaApplication.kt", content: nawaApplicationKt },
     { path: "app/src/main/java/com/nawa/agent/MainActivity.kt", content: mainActivityKt },
     { path: "app/src/main/assets/nawa_weights.bin", content: weightsBin },
   ];
