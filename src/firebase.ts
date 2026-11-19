@@ -151,10 +151,35 @@ export interface CloudChatMessage {
   kbTier?: DeviceKBProfile;
 }
 
+export interface UserMonthlyUsage {
+  monthKey: string;
+  requestsCount: number;
+  tokensCount: number;
+  lastModel: string;
+  email: string;
+}
+
 const VALID_ID_RE = /^[a-zA-Z0-9_\-]+$/;
 
 function clampStr(val: string, maxLen: number): string {
   return val.trim().slice(0, maxLen);
+}
+
+export async function getGoogleAuthHeaders(): Promise<Record<string, string>> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (auth.currentUser) {
+    try {
+      const token = await auth.currentUser.getIdToken();
+      if (token) {
+        headers.Authorization = `Bearer ${token}`;
+      }
+    } catch {
+      // let server reject invalid/expired token
+    }
+  }
+  return headers;
 }
 
 export async function signInWithGoogleAccount(): Promise<User> {
@@ -315,20 +340,22 @@ export async function upsertCloudChatThread(
   const userRef = doc(db, "users", userId);
   const ref = doc(db, "users", userId, "chats", chatId);
   const cleanTitle = clampStr(title || "محادثة جديدة", 140) || "محادثة جديدة";
+  const safeDeviceProfile: DeviceKBProfile =
+    deviceProfile === "mobile-50m" ? "mobile-50m" : "desktop-50b";
 
   try {
     const userSnap = await getDoc(userRef);
     if (!userSnap.exists()) {
       await setDoc(userRef, {
         uid: userId,
-        displayName: "مستخدم نواة",
-        email: auth.currentUser?.email || "user@nawa.local",
+        displayName: clampStr(auth.currentUser?.displayName || "مستخدم نواة", 100) || "مستخدم نواة",
+        email: clampStr(auth.currentUser?.email || "user@nawa.local", 150) || "user@nawa.local",
         themePreset: "claude-light",
         accentColor: "terracotta",
         fontFamily: "editorial",
         fontSize: "md",
         density: "comfortable",
-        deviceProfile: "desktop-50b",
+        deviceProfile: safeDeviceProfile,
         direction: "rtl",
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
@@ -340,7 +367,7 @@ export async function upsertCloudChatThread(
       const payload: Record<string, unknown> = {
         ownerId: userId,
         title: cleanTitle,
-        deviceProfile,
+        deviceProfile: safeDeviceProfile,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       };
@@ -349,7 +376,7 @@ export async function upsertCloudChatThread(
     } else {
       const patch: Record<string, unknown> = {
         title: cleanTitle,
-        deviceProfile,
+        deviceProfile: safeDeviceProfile,
         updatedAt: serverTimestamp(),
       };
       if (activeTopic) patch.activeTopic = clampStr(activeTopic, 80);
@@ -381,7 +408,7 @@ export async function saveCloudChatMessage(
       createdAt: serverTimestamp(),
     };
     if (dialect) payload.dialect = clampStr(dialect, 64);
-    if (kbTier) payload.kbTier = kbTier;
+    if (kbTier === "desktop-50b" || kbTier === "mobile-50m") payload.kbTier = kbTier;
     await setDoc(ref, payload);
   } catch (error) {
     handleFirestoreError(error, OperationType.CREATE, msgPath);
@@ -436,4 +463,81 @@ export async function deleteCloudChatThread(userId: string, chatId: string): Pro
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, path);
   }
+}
+
+export function getCurrentMonthKey(): string {
+  return new Date().toISOString().slice(0, 7);
+}
+
+export async function recordCloudUsageInFirestore(
+  user: User,
+  tokensUsed: number,
+  modelName: string
+): Promise<void> {
+  if (!VALID_ID_RE.test(user.uid)) return;
+  const monthKey = getCurrentMonthKey();
+  const ref = doc(db, "users", user.uid, "usage", monthKey);
+  const safeTokens = Math.max(0, Math.min(1000000, Math.round(tokensUsed || 0)));
+  const cleanEmail = clampStr(user.email || "user@nawa.local", 150) || "user@nawa.local";
+  const cleanModel = clampStr(modelName || "gemini-3.1-flash-lite", 64) || "gemini-3.1-flash-lite";
+
+  try {
+    const snap = await getDoc(ref);
+    if (!snap.exists()) {
+      await setDoc(ref, {
+        ownerId: user.uid,
+        email: cleanEmail,
+        monthKey,
+        requestsCount: 1,
+        tokensCount: safeTokens,
+        lastModel: cleanModel,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    } else {
+      const prev = snap.data();
+      const nextRequests = Math.min(1000000, Number(prev.requestsCount || 0) + 1);
+      const nextTokens = Math.min(1000000000, Number(prev.tokensCount || 0) + safeTokens);
+      await updateDoc(ref, {
+        email: cleanEmail,
+        requestsCount: nextRequests,
+        tokensCount: nextTokens,
+        lastModel: cleanModel,
+        updatedAt: serverTimestamp(),
+      });
+    }
+  } catch {
+    // Non-blocking ledger persistence (do not crash chat UX if offline)
+  }
+}
+
+export function subscribeUserMonthlyUsage(
+  userId: string,
+  monthKey: string,
+  onData: (usage: UserMonthlyUsage | null) => void
+): Unsubscribe {
+  if (!VALID_ID_RE.test(userId) || !VALID_ID_RE.test(monthKey)) {
+    return () => {};
+  }
+  const ref = doc(db, "users", userId, "usage", monthKey);
+  return onSnapshot(
+    ref,
+    (snap) => {
+      if (!snap.exists()) {
+        onData(null);
+        return;
+      }
+      const data = snap.data();
+      onData({
+        monthKey: String(data.monthKey || monthKey),
+        requestsCount: Number(data.requestsCount || 0),
+        tokensCount: Number(data.tokensCount || 0),
+        lastModel: String(data.lastModel || "gemini-3.1-flash-lite"),
+        email: String(data.email || ""),
+      });
+    },
+    () => {
+      onData(null);
+    }
+  );
 }

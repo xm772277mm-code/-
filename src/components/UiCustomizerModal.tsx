@@ -1,7 +1,6 @@
 import React from "react";
-import { Megaphone, Monitor, Play, RotateCcw, Smartphone, X } from "lucide-react";
+import { RotateCcw, X } from "lucide-react";
 import { useUiSettings } from "../contexts/UiSettingsContext.tsx";
-import type { AppOpenAdConfig } from "../hooks/useAppOpenAds.ts";
 import type {
   AccentPreset,
   DensityPreset,
@@ -14,16 +13,13 @@ import type {
 interface UiCustomizerModalProps {
   open: boolean;
   onClose: () => void;
-  adConfig: AppOpenAdConfig;
-  onUpdateAdConfig: (patch: Partial<AppOpenAdConfig>) => void;
-  onPreviewAppOpenAd: () => void;
 }
 
 const THEME_OPTIONS: Array<{ id: ThemePreset; label: string; bg: string; fg: string }> = [
-  { id: "claude-light", label: "كلود فاتح دافئ", bg: "#FAF9F5", fg: "#1F1E1A" },
-  { id: "claude-dark", label: "كلود فحمي داكن", bg: "#21201C", fg: "#F4F1EA" },
-  { id: "sand", label: "ورق رملي مريح", bg: "#F6F1E7", fg: "#2A2116" },
-  { id: "midnight", label: "ليلي عميق", bg: "#0F131A", fg: "#EEF2F7" },
+  { id: "claude-light", label: "نهاري واضح (افتراضي)", bg: "#F8FAFC", fg: "#0F172A" },
+  { id: "claude-dark", label: "فحمي داكن", bg: "#18181B", fg: "#F4F4F5" },
+  { id: "sand", label: "ورق دافئ مريح", bg: "#F7F4EE", fg: "#26211B" },
+  { id: "midnight", label: "ليلي عميق", bg: "#0B1120", fg: "#F1F5F9" },
 ];
 
 const ACCENT_OPTIONS: Array<{ id: AccentPreset; label: string; hex: string }> = [
@@ -42,9 +38,6 @@ const FONT_OPTIONS: Array<{ id: FontPreset; label: string }> = [
 export default function UiCustomizerModal({
   open,
   onClose,
-  adConfig,
-  onUpdateAdConfig,
-  onPreviewAppOpenAd,
 }: UiCustomizerModalProps) {
   const { settings, updateSettings, resetSettings, user } = useUiSettings();
 
@@ -69,11 +62,11 @@ export default function UiCustomizerModal({
           style={{ borderColor: "var(--nawa-border)" }}
         >
           <div>
-            <h2 className="font-display text-lg font-bold">تخصيص واجهة المستخدم والنموذج</h2>
+            <h2 className="font-display text-lg font-bold">تخصيص المظهر والخطوط</h2>
             <p className="mt-0.5 text-xs" style={{ color: "var(--nawa-muted)" }}>
               {user
-                ? `يتم حفظ تخصيصاتك تلقائياً على حسابك (${user.email})`
-                : "سجّل الدخول بحساب Google لمزامنة تخصيصاتك عبر أجهزتك."}
+                ? `تُحفظ تفضيلاتك تلقائياً على حسابك (${user.email})`
+                : "سجّل الدخول بحساب Google لمزامنة تفضيلاتك عبر أجهزتك."}
             </p>
           </div>
           <button
@@ -151,62 +144,6 @@ export default function UiCustomizerModal({
                   </button>
                 );
               })}
-            </div>
-          </div>
-
-          {/* Device Knowledge Base Tier (50B Desktop vs 50M Mobile) */}
-          <div>
-            <div className="mb-2 text-xs font-semibold" style={{ color: "var(--nawa-muted)" }}>
-              قاعدة الأسئلة وسعة المعرفة حسب الجهاز
-            </div>
-            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-              <button
-                type="button"
-                onClick={() => updateSettings({ deviceProfile: "desktop-50b" })}
-                className="flex items-start gap-2.5 rounded-xl border p-3 text-right transition-colors"
-                style={{
-                  backgroundColor:
-                    settings.deviceProfile === "desktop-50b"
-                      ? "var(--nawa-accent-soft)"
-                      : "var(--nawa-elevated)",
-                  borderColor:
-                    settings.deviceProfile === "desktop-50b"
-                      ? "var(--nawa-accent)"
-                      : "var(--nawa-border)",
-                }}
-              >
-                <Monitor className="mt-0.5 h-4 w-4 shrink-0" style={{ color: "var(--nawa-accent)" }} />
-                <div>
-                  <div className="text-xs font-semibold">إصدار الكمبيوتر · 50 مليار سؤال</div>
-                  <div className="mt-0.5 text-[11px] tabular-nums" style={{ color: "var(--nawa-muted)" }}>
-                    50,000,000,000 سؤال · 4,096 شريحة دلالية
-                  </div>
-                </div>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => updateSettings({ deviceProfile: "mobile-50m" })}
-                className="flex items-start gap-2.5 rounded-xl border p-3 text-right transition-colors"
-                style={{
-                  backgroundColor:
-                    settings.deviceProfile === "mobile-50m"
-                      ? "var(--nawa-accent-soft)"
-                      : "var(--nawa-elevated)",
-                  borderColor:
-                    settings.deviceProfile === "mobile-50m"
-                      ? "var(--nawa-accent)"
-                      : "var(--nawa-border)",
-                }}
-              >
-                <Smartphone className="mt-0.5 h-4 w-4 shrink-0" style={{ color: "var(--nawa-accent)" }} />
-                <div>
-                  <div className="text-xs font-semibold">إصدار الهاتف · 50 مليون سؤال</div>
-                  <div className="mt-0.5 text-[11px] tabular-nums" style={{ color: "var(--nawa-muted)" }}>
-                    50,000,000 سؤال · 512 شريحة موفرة للرام
-                  </div>
-                </div>
-              </button>
             </div>
           </div>
 
@@ -317,186 +254,6 @@ export default function UiCustomizerModal({
             </div>
           </div>
 
-          {/* App Open Ads Management */}
-          <div
-            className="border-t pt-5"
-            style={{ borderColor: "var(--nawa-border)" }}
-          >
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
-                <Megaphone className="h-4 w-4" style={{ color: "var(--nawa-accent)" }} />
-                <span className="text-xs font-semibold">إعلانات فتح التطبيق (App Open Ads)</span>
-              </div>
-              <div className="flex items-center gap-2 text-xs tabular-nums" style={{ color: "var(--nawa-muted)" }}>
-                <span>الظهور: {adConfig.impressions}</span>
-                <span aria-hidden="true">·</span>
-                <span>النقرات: {adConfig.clicks}</span>
-              </div>
-            </div>
-
-            <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <button
-                type="button"
-                onClick={() => onUpdateAdConfig({ enabled: !adConfig.enabled })}
-                className="flex items-center justify-between rounded-xl border px-3.5 py-2.5 text-xs font-medium transition-colors"
-                style={{
-                  backgroundColor: adConfig.enabled ? "var(--nawa-accent-soft)" : "var(--nawa-elevated)",
-                  borderColor: adConfig.enabled ? "var(--nawa-accent)" : "var(--nawa-border)",
-                }}
-              >
-                <span>عرض الإعلان عند فتح التطبيق</span>
-                <span className="font-bold" style={{ color: adConfig.enabled ? "var(--nawa-accent)" : "var(--nawa-muted)" }}>
-                  {adConfig.enabled ? "مفعّل" : "معطّل"}
-                </span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => onUpdateAdConfig({ showOnResume: !adConfig.showOnResume })}
-                className="flex items-center justify-between rounded-xl border px-3.5 py-2.5 text-xs font-medium transition-colors"
-                style={{
-                  backgroundColor: adConfig.showOnResume ? "var(--nawa-accent-soft)" : "var(--nawa-elevated)",
-                  borderColor: adConfig.showOnResume ? "var(--nawa-accent)" : "var(--nawa-border)",
-                }}
-              >
-                <span>إظهار عند العودة من الخلفية</span>
-                <span className="font-bold" style={{ color: adConfig.showOnResume ? "var(--nawa-accent)" : "var(--nawa-muted)" }}>
-                  {adConfig.showOnResume ? "مفعّل" : "معطّل"}
-                </span>
-              </button>
-            </div>
-
-            <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <div>
-                <label className="mb-1.5 block text-xs font-semibold" style={{ color: "var(--nawa-muted)" }}>
-                  مدة العد التنازلي
-                </label>
-                <div
-                  className="grid grid-cols-3 gap-1.5 rounded-xl border p-1"
-                  style={{ borderColor: "var(--nawa-border)", backgroundColor: "var(--nawa-elevated)" }}
-                >
-                  {([3, 4, 5] as const).map((sec) => (
-                    <button
-                      key={sec}
-                      type="button"
-                      onClick={() => onUpdateAdConfig({ countdownSeconds: sec })}
-                      className="rounded-lg py-1.5 text-xs font-medium tabular-nums transition-colors"
-                      style={{
-                        backgroundColor: adConfig.countdownSeconds === sec ? "var(--nawa-surface)" : "transparent",
-                        color: adConfig.countdownSeconds === sec ? "var(--nawa-text)" : "var(--nawa-muted)",
-                      }}
-                    >
-                      {sec} ثوانٍ
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div>
-                <label className="mb-1.5 block text-xs font-semibold" style={{ color: "var(--nawa-muted)" }}>
-                  معرّف تطبيق AdMob (للأندرويد APK)
-                </label>
-                <input
-                  type="text"
-                  dir="ltr"
-                  value={adConfig.adMobAppId}
-                  onChange={(e) => onUpdateAdConfig({ adMobAppId: e.target.value })}
-                  placeholder="ca-app-pub-xxxxxxxxxxxxxxxx~xxxxxxxxxx"
-                  className="w-full rounded-xl border px-3 py-2 font-mono text-xs focus:outline-none"
-                  style={{
-                    backgroundColor: "var(--nawa-elevated)",
-                    borderColor: "var(--nawa-border)",
-                    color: "var(--nawa-text)",
-                  }}
-                />
-              </div>
-
-              <div>
-                <label className="mb-1.5 block text-xs font-semibold" style={{ color: "var(--nawa-muted)" }}>
-                  معرّف وحدة AdMob App Open (للأندرويد APK)
-                </label>
-                <input
-                  type="text"
-                  dir="ltr"
-                  value={adConfig.adMobUnitId}
-                  onChange={(e) => onUpdateAdConfig({ adMobUnitId: e.target.value })}
-                  placeholder="ca-app-pub-xxxxxxxxxxxxxxxx/xxxxxxxxxx"
-                  className="w-full rounded-xl border px-3 py-2 font-mono text-xs focus:outline-none"
-                  style={{
-                    backgroundColor: "var(--nawa-elevated)",
-                    borderColor: "var(--nawa-border)",
-                    color: "var(--nawa-text)",
-                  }}
-                />
-              </div>
-
-              <div>
-                <label className="mb-1.5 block text-xs font-semibold" style={{ color: "var(--nawa-muted)" }}>
-                  معرّف Google AdSense للويب (اختياري)
-                </label>
-                <div className="grid grid-cols-2 gap-1.5">
-                  <input
-                    type="text"
-                    dir="ltr"
-                    value={adConfig.adSenseClientId}
-                    onChange={(e) => onUpdateAdConfig({ adSenseClientId: e.target.value })}
-                    placeholder="ca-pub-..."
-                    className="w-full rounded-xl border px-2.5 py-2 font-mono text-xs focus:outline-none"
-                    style={{
-                      backgroundColor: "var(--nawa-elevated)",
-                      borderColor: "var(--nawa-border)",
-                      color: "var(--nawa-text)",
-                    }}
-                  />
-                  <input
-                    type="text"
-                    dir="ltr"
-                    value={adConfig.adSenseSlotId}
-                    onChange={(e) => onUpdateAdConfig({ adSenseSlotId: e.target.value })}
-                    placeholder="Slot ID"
-                    className="w-full rounded-xl border px-2.5 py-2 font-mono text-xs focus:outline-none"
-                    style={{
-                      backgroundColor: "var(--nawa-elevated)",
-                      borderColor: "var(--nawa-border)",
-                      color: "var(--nawa-text)",
-                    }}
-                  />
-                </div>
-              </div>
-            </div>
-
-            <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-              <a
-                href={`/api/packaging/download/apk-kit?adMobAppId=${encodeURIComponent(adConfig.adMobAppId)}&adMobUnitId=${encodeURIComponent(adConfig.adMobUnitId)}`}
-                download="NawaCore-Android-APK-Kit.zip"
-                className="inline-flex h-9 items-center gap-1.5 rounded-xl border px-3.5 text-xs font-medium transition-colors whitespace-nowrap"
-                style={{
-                  backgroundColor: "var(--nawa-elevated)",
-                  borderColor: "var(--nawa-border)",
-                  color: "var(--nawa-accent)",
-                }}
-              >
-                <span>تصدير حزمة APK بهذه المعرّفات</span>
-              </a>
-
-              <button
-                type="button"
-                onClick={() => {
-                  onClose();
-                  onPreviewAppOpenAd();
-                }}
-                className="inline-flex h-9 items-center gap-1.5 rounded-xl border px-3.5 text-xs font-semibold transition-colors whitespace-nowrap"
-                style={{
-                  backgroundColor: "var(--nawa-elevated)",
-                  borderColor: "var(--nawa-border)",
-                  color: "var(--nawa-text)",
-                }}
-              >
-                <Play className="h-3.5 w-3.5" style={{ color: "var(--nawa-accent)" }} />
-                <span>معاينة إعلان فتح التطبيق الآن</span>
-              </button>
-            </div>
-          </div>
         </div>
 
         <div

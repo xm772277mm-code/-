@@ -1274,12 +1274,15 @@ export class NawaTransformerLM {
     };
   }
 
+  static readonly CORPUS_VERSION = 2;
+
   /**
    * Exports genuine binary checkpoint `nawa_llm.bin`:
-   * [Magic "NAWALM01" (8B)] [Header JSON length (4B)] [Header JSON (config + tokenizer + lossHistory)] [All Float32 weights]
+   * [Magic "NAWALM01" (8B)] [Header JSON length (4B)] [Header JSON (config + tokenizer + lossHistory + corpusVersion)] [All Float32 weights]
    */
   exportBinary(): Uint8Array {
     const headerObj = {
+      corpusVersion: NawaTransformerLM.CORPUS_VERSION,
       config: this.config,
       tokenizer: this.tokenizer.serialize(),
       trainedEpochs: this.trainedEpochs,
@@ -1311,11 +1314,15 @@ export class NawaTransformerLM {
     const headerLen = new DataView(raw.buffer, raw.byteOffset, raw.byteLength).getUint32(8, true);
     const headerJson = new TextDecoder().decode(raw.slice(12, 12 + headerLen));
     const header = JSON.parse(headerJson) as {
+      corpusVersion?: number;
       config: TransformerConfig;
       tokenizer: TokenizerState;
       trainedEpochs: number;
       lossHistory: TrainingLossPoint[];
     };
+    if ((header.corpusVersion || 1) < NawaTransformerLM.CORPUS_VERSION) {
+      throw new Error("Outdated nawa_llm.bin corpusVersion — retraining upgraded model");
+    }
     const tokenizer = new NawaBpeTokenizer(header.tokenizer);
     const lm = new NawaTransformerLM(tokenizer, header.config);
     lm.trainedEpochs = header.trainedEpochs || 0;
@@ -1344,7 +1351,7 @@ export class NawaTransformerLM {
     const checkpointBytes = fs.existsSync(binPath) ? fs.statSync(binPath).size : this.exportBinary().byteLength;
     const latest = this.lossHistory[this.lossHistory.length - 1];
     return {
-      name: "NawaLM-Transformer",
+      name: "NawaLM-Transformer v2",
       config: this.config,
       totalParams: this.totalParams,
       checkpointBytes,
@@ -1374,23 +1381,23 @@ export function getNawaTransformerLM(): NawaTransformerLM {
       transformerSingleton = NawaTransformerLM.loadBinary(raw);
       return transformerSingleton;
     } catch {
-      // Fall through to fresh pre-training if checkpoint is corrupt
+      // Fall through to fresh pre-training if checkpoint is outdated or corrupt
     }
   }
 
   const tokenizer = new NawaBpeTokenizer();
   tokenizer.train(
     runtimeCorpus.flatMap((p) => [p.prompt, p.response]),
-    680
+    580
   );
   const lm = new NawaTransformerLM(tokenizer, {
-    dModel: 64,
+    dModel: 48,
     nLayers: 2,
     nHeads: 4,
-    dFF: 160,
-    maxSeqLen: 112,
+    dFF: 96,
+    maxSeqLen: 80,
   });
-  lm.trainCorpus(runtimeCorpus, 40, 0.016, 4);
+  lm.trainCorpus(runtimeCorpus, 6, 0.03, 7);
   lm.saveToDisk(checkpointPath);
   transformerSingleton = lm;
   return transformerSingleton;

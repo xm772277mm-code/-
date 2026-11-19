@@ -14,6 +14,13 @@ import {
   type KBEntitySpec,
   type KBResolution,
 } from "./NawaKnowledgeBase.ts";
+import {
+  analyzeCodeSnippetDetailed,
+  draftStructuredContent,
+  evaluateLocalCalculator,
+  summarizeOrTransformText,
+  synthesizeLocalCode,
+} from "./NawaLocalTools.ts";
 
 export type ResponseStyle = "auto" | "simple" | "detailed" | "concise";
 
@@ -44,8 +51,11 @@ export interface TextAnalysis {
     | "why_reason"
     | "definition"
     | "code_review"
+    | "code_synthesize"
     | "math"
     | "summarize"
+    | "text_transform"
+    | "draft_template"
     | "followup_simplify"
     | "followup_example"
     | "followup_detail"
@@ -243,16 +253,20 @@ function analyzeInputDeep(raw: string, norm: ReturnType<typeof normalizeArabicDi
   const extractedEntities = matchedEntities.map((e) => e.id);
   const topicSwitched = /(سيبك من|انسى|غير الموضوع|ننتقل لـ|موضوع تاني|بعيدا عن)/.test(t);
   const hasCodeBlock =
-    /(?:def\s+\w+|function\s+\w+|async\s+function|const\s+\w+\s*=|class\s+\w+|SELECT\s+.+FROM|for\s*\(|for\s+\w+\s+in\s+)/i.test(
+    /(?:def\s+\w+|function\s+\w+|async\s+function|const\s+\w+\s*=|let\s+\w+\s*=|class\s+\w+|SELECT\s+.+FROM|INSERT\s+INTO|for\s*\(|for\s+\w+\s+in\s+|fn\s+\w+|#include\s*<)/i.test(
       raw
     );
+  const calcMatch = evaluateLocalCalculator(raw);
+  const textToolMatch = summarizeOrTransformText(raw);
+  const codeSynthMatch = !hasCodeBlock ? synthesizeLocalCode(raw, t) : null;
+  const draftMatch = !codeSynthMatch ? draftStructuredContent(raw, t) : null;
 
   let questionType: TextAnalysis["questionType"] = "general";
   const startsWithGreeting = /^(اهلا|مرحبا|السلام عليكم|سلام عليكم|ازيك|عامل ايه|اخبارك|صباح|مساء|هلا|شلونك|كيف حالك|كيف الحال|كيفك|الو|الوو|hi|hello|hey)(?:\s|$)/.test(t);
   const hasDomainQuestion =
     extractedEntities.length > 0 &&
-    /(ليه|ازاي|كيف|احسب|اشرح|قارن|ما هو|ما هي|عايز اعرف|مشكله|ليه|يعني ايه)/.test(t);
-  if (startsWithGreeting && !hasDomainQuestion) {
+    /(ليه|ازاي|كيف|احسب|اشرح|قارن|ما هو|ما هي|عايز اعرف|مشكله|يعني ايه)/.test(t);
+  if (startsWithGreeting && !hasDomainQuestion && !calcMatch && !codeSynthMatch) {
     questionType = "greeting";
   } else if (
     /(?:^|\s)(شكرا|تسلم|متشكر|يعطيك العافيه|جزاك الله|عاش|ممتاز|جامد|برافو|thank|thanks)(?:\s|$)/.test(t) &&
@@ -270,8 +284,14 @@ function analyzeInputDeep(raw: string, norm: ReturnType<typeof normalizeArabicDi
     questionType = "identity";
   } else if (hasCodeBlock) {
     questionType = "code_review";
-  } else if (safeEvalMath(raw)) {
+  } else if (calcMatch) {
     questionType = "math";
+  } else if (textToolMatch) {
+    questionType = "text_transform";
+  } else if (codeSynthMatch) {
+    questionType = "code_synthesize";
+  } else if (draftMatch) {
+    questionType = "draft_template";
   } else if (/(قارن|الفرق|مقارنه|ولا|vs|compare|difference|احسن من)/.test(t)) {
     questionType = "comparison";
   } else if (/(بسط|ابسط|بالعامي|بسهوله|مش فاهم|باختصار|بكلام بسيط|simplify)/.test(t)) {
@@ -294,7 +314,7 @@ function analyzeInputDeep(raw: string, norm: ReturnType<typeof normalizeArabicDi
 
   let sentiment: TextAnalysis["sentiment"] = "casual";
   if (/(بسرعه|فورا|عاجل|لاج|بطيء|مشكله)/.test(t)) sentiment = "urgent";
-  else if (extractedEntities.length > 0 || hasCodeBlock) sentiment = "technical";
+  else if (extractedEntities.length > 0 || hasCodeBlock || codeSynthMatch) sentiment = "technical";
   else if (/[؟?]|ليه|ازاي|يعني/.test(raw)) sentiment = "curious";
 
   const roots = norm.canonicalTokens.filter((tok) => tok.length >= 2).slice(0, 8);
@@ -506,8 +526,7 @@ function evaluateCoherenceAndClean(
 
     if (questionType === "farewell") {
       return {
-        cleanText:
-          "مع السلامة وأتمنى لك وقتاً موفقاً! أنا موجود هنا محلياً في أي وقت تحب ترجع تكمل كلامنا.",
+        cleanText: "مع السلامة وأتمنى لك وقتاً موفقاً! أنا موجود هنا في أي وقت تحب ترجع تكمل كلامنا.",
         guardStatus: "kb_synthesized",
         guardReason: "توديع طبيعي ومنضبط.",
       };
@@ -519,11 +538,11 @@ function evaluateCoherenceAndClean(
     ) {
       return {
         cleanText:
-          "أنا **نواة** — مساعد ذكي محلي يعمل بالكامل داخل التطبيق دون إنترنت أو API خارجي.\n\n" +
-          "وبكل صراحة تقنية: أنا محرك لغوي خفيف مبني على معالجة محلية وفهرس معرفة منظم للموضوعات البرمجية والتقنية والعلمية والحياتية والحسابات؛ لذا أستطيع التفاعل معك فوراً بالعامية أو الفصحى في هذه المجالات، لكنني لست نموذجاً سحابياً عملاقاً بمئات المليارات من المعاملات.\n\n" +
-          "جرّب تسألني أي سؤال في بالك الآن وسأساعدك مباشرة!",
+          "أنا **نواة** — **نموذج صغير (النسخة التجريبية)**.\n\n" +
+          "أستطيع مساعدتك في كتابة ومراجعة الكود، حل العمليات الحسابية وتحويل الوحدات، تلخيص النصوص، وصياغة الرسائل والخطط وشرح مفاهيم العلوم والمالية والتقنية بالعامية أو الفصحى.\n\n" +
+          "اسألني عمّا تريد الآن وسأساعدك مباشرة!",
         guardStatus: "kb_synthesized",
-        guardReason: "تعريف صريح ودقيق بهوية النموذج المحلي وإمكانياته الحقيقية.",
+        guardReason: "تعريف طبيعي بهوية المساعد.",
       };
     }
 
@@ -706,17 +725,65 @@ export class NawaOfflineLLM {
     let guardReason = "توليد عصبي متماسك ومطابق للسياق.";
 
     if (analysis.questionType === "math") {
-      const m = safeEvalMath(trimmed)!;
+      const calcOut = evaluateLocalCalculator(trimmed);
       neuralGen = lm.generate("ملخص قدرات نموذج نواة", {
         maxNewTokens: 12,
         temperature,
         topK,
         compressionEnabled: context.compressionEnabled,
       });
-      reply = `ناتج العملية الحسابية \`${m.expr}\` هو **${m.value.toLocaleString("en-US")}**.\n\nتم حساب النتيجة بدقة عبر وحدة الحساب المحلية مع تمريرة التحقق العصبي.`;
+      if (calcOut) {
+        reply = calcOut.reply;
+        guardStatus = "verified_tool";
+        guardReason = `${calcOut.titleAr} — حساب حتمي دقيق 100% دون تقريب.`;
+        suggestions = calcOut.suggestions;
+        nextTopic = calcOut.topicTag;
+      } else {
+        const m = safeEvalMath(trimmed)!;
+        reply = `ناتج العملية الحسابية \`${m.expr}\` هو **${m.value.toLocaleString("en-US")}**.`;
+        guardStatus = "verified_tool";
+        guardReason = "حساب رياضي مضبوط من وحدة الحساب الدقيقة دون أي تقريب أو هلوسة.";
+        suggestions = ["خصم 20% على 1500", "حول 4 GB إلى MB"];
+      }
+    } else if (analysis.questionType === "text_transform") {
+      const textOut = summarizeOrTransformText(trimmed)!;
+      neuralGen = lm.generate("ملخص قدرات نموذج نواة", {
+        maxNewTokens: 12,
+        temperature,
+        topK,
+        compressionEnabled: context.compressionEnabled,
+      });
+      reply = textOut.reply;
       guardStatus = "verified_tool";
-      guardReason = "حساب رياضي مضبوط من وحدة الحساب المحلية دون أي تقريب أو هلوسة.";
-      suggestions = ["احسب 50000000 / 22", "ما هو WebAssembly WASM وليه سريع"];
+      guardReason = `${textOut.titleAr} — معالجة نصية حتمية على الجهاز.`;
+      suggestions = textOut.suggestions;
+      nextTopic = textOut.topicTag;
+    } else if (analysis.questionType === "code_synthesize") {
+      const synthOut = synthesizeLocalCode(trimmed, norm.normalized)!;
+      neuralGen = lm.generate("نصائح لتحسين سرعة الكود وتجنب الثغرات", {
+        maxNewTokens: 18,
+        temperature,
+        topK,
+        compressionEnabled: context.compressionEnabled,
+      });
+      reply = synthOut.reply;
+      guardStatus = "verified_tool";
+      guardReason = `${synthOut.titleAr} — توليد كود منضبط وجاهز للتشغيل.`;
+      suggestions = synthOut.suggestions;
+      nextTopic = synthOut.topicTag;
+    } else if (analysis.questionType === "draft_template") {
+      const draftOut = draftStructuredContent(trimmed, norm.normalized)!;
+      neuralGen = lm.generate("ملخص قدرات نموذج نواة", {
+        maxNewTokens: 14,
+        temperature,
+        topK,
+        compressionEnabled: context.compressionEnabled,
+      });
+      reply = draftOut.reply;
+      guardStatus = "verified_tool";
+      guardReason = `${draftOut.titleAr} — مسودة منظمة وجاهزة للتخصيص.`;
+      suggestions = draftOut.suggestions;
+      nextTopic = draftOut.topicTag;
     } else if (analysis.questionType === "code_review") {
       neuralGen = lm.generate("نصائح لتحسين سرعة الكود وتجنب الثغرات", {
         maxNewTokens: 48,
@@ -724,7 +791,7 @@ export class NawaOfflineLLM {
         topK,
         compressionEnabled: context.compressionEnabled,
       });
-      const codeAudit = analyzeCodeSnippet(trimmed) || "";
+      const codeAudit = analyzeCodeSnippetDetailed(trimmed) || analyzeCodeSnippet(trimmed) || "";
       const guardedTip = evaluateCoherenceAndClean(
         neuralGen.text,
         neuralGen.perplexityEstimate,
@@ -733,9 +800,9 @@ export class NawaOfflineLLM {
         kbRes,
         true
       );
-      reply = codeAudit + (guardedTip.cleanText ? `\n\n**توصية النموذج:** ${guardedTip.cleanText}` : "");
+      reply = codeAudit + (guardedTip.cleanText ? `\n\n**ملاحظة إضافية:** ${guardedTip.cleanText}` : "");
       guardStatus = "verified_tool";
-      guardReason = "تحليل بنية وأمان الكود مع توصية موجهة خالية من الشوائب.";
+      guardReason = "تحليل بنية وأمان الكود عبر وحدة الفحص الدقيقة مع توصية موجهة خالية من الشوائب.";
       suggestions = ["نصائح لتحسين سرعة الكود وتجنب الثغرات", "ازاي احمي كلمات المرور والتوكنات"];
     } else if (
       (analysis.questionType === "summarize" || /(فاكر|كنا بنتكلم|اتكلمنا في ايه|سياق الحوار)/.test(norm.normalized)) &&
@@ -756,9 +823,9 @@ export class NawaOfflineLLM {
         .slice(-3)
         .map((h) => `- ${h.content.slice(0, 80)}`);
       reply =
-        `**ملخص السياق الكامل للجلسة (${KB_PROFILES[activeProfile].labelAr}):**\n` +
-        (context.compressedSummary ? `- **الذاكرة المضغوطة:** ${context.compressedSummary}\n` : "") +
-        (activeTopics.length ? `- **المواضيع النشطة:** ${activeTopics.join("، ")}\n` : "") +
+        `**ملخص المحادثة الحالية:**\n` +
+        (context.compressedSummary ? `- **الملخص العام:** ${context.compressedSummary}\n` : "") +
+        (activeTopics.length ? `- **المواضيع التي تمت مناقشتها:** ${activeTopics.join("، ")}\n` : "") +
         (recentUserMsgs.length ? `\n**آخر ما ناقشناه:**\n${recentUserMsgs.join("\n")}` : "");
       guardStatus = "verified_tool";
       guardReason = "استرجاع دقيق لملخص السياق والذاكرة المضغوطة.";
@@ -770,8 +837,8 @@ export class NawaOfflineLLM {
         compressionEnabled: context.compressionEnabled,
       });
       reply = /^وعليك|^السلام|^سلام/.test(norm.normalized)
-        ? "وعليكم السلام ورحمة الله! أهلاً بك يا صديقي، أنا بخير وجاهز أساعدك فوراً. اسألني في أي موضوع برمجي، تقني، علمي، حسابي، أو أي حاجة في بالك!"
-        : "أهلاً بك يا صديقي! أنا بخير والحمد لله وجاهز أساعدك فوراً. تقدر تكلمني بالعامية أو الفصحى في أي موضوع: برمجة، مشاكل التلفون أو الكمبيوتر، علوم، حسابات، أو أي سؤال في بالك!";
+        ? "وعليكم السلام ورحمة الله! أهلاً بك يا صديقي، أنا نواة — نموذج صغير (النسخة التجريبية) وجاهز أساعدك فوراً في البرمجة والحسابات وتحويل الوحدات وتلخيص النصوص والمعلومات العامة!"
+        : "أهلاً بك يا صديقي! أنا نواة — نموذج صغير (النسخة التجريبية) وجاهز أساعدك فوراً! تقدر تسألني بالعامية أو الفصحى: برمجة، كتابة دوال، حسابات ونسب مئوية، تحويل وحدات، علوم، مالية، أو تلخيص نصوص!";
       guardStatus = "kb_synthesized";
       guardReason = "ترحيب طبيعي وسياقي خالٍ من أي نص دخيل.";
       nextTopic = "greeting";
@@ -793,7 +860,7 @@ export class NawaOfflineLLM {
         topK,
         compressionEnabled: context.compressionEnabled,
       });
-      reply = "مع السلامة وأتمنى لك وقتاً موفقاً! أنا موجود هنا محلياً في أي وقت تحب ترجع تكمل كلامنا.";
+      reply = "مع السلامة وأتمنى لك وقتاً موفقاً! أنا موجود هنا في أي وقت تحب ترجع تكمل كلامنا.";
       guardStatus = "kb_synthesized";
       guardReason = "توديع طبيعي ومنضبط.";
       nextTopic = "farewell";
@@ -808,12 +875,20 @@ export class NawaOfflineLLM {
         compressionEnabled: context.compressionEnabled,
       });
       reply =
-        "أنا **نواة** — مساعد ذكي محلي يعمل بالكامل داخل التطبيق دون إنترنت أو API خارجي.\n\n" +
-        "وبكل صراحة تقنية: أنا محرك لغوي خفيف مبني على معالجة محلية وفهرس معرفة منظم للموضوعات البرمجية والتقنية والعلمية والحياتية والحسابات؛ لذا أستطيع التفاعل معك فوراً بالعامية أو الفصحى في هذه المجالات، لكنني لست نموذجاً سحابياً عملاقاً بمئات المليارات من المعاملات.\n\n" +
-        "جرّب تسألني أي سؤال في بالك الآن وسأساعدك مباشرة!";
+        "أنا **نواة** — **نموذج صغير (النسخة التجريبية)** مدمج وسريع.\n\n" +
+        "**كيف يمكنني مساعدتك؟**\n" +
+        "- **البرمجة والكود:** كتابة دوال TypeScript / Python / React / SQL / Dockerfile ومراجعة الكود واكتشاف الأخطاء.\n" +
+        "- **الحسابات والتحويلات:** حل العمليات بالأقواس والأسس والجذور، حساب الخصومات والضرائب، وتحويل الوحدات.\n" +
+        "- **التلخيص والصياغة:** تلخيص النصوص الطويلة، عد الكلمات، وكتابة مسودات البريد وخطط العمل.\n" +
+        "- **المعرفة الموسّعة:** إجابات في البرمجة والأمن السيبراني والذكاء الاصطناعي والعلوم والمالية الشخصية وإدارة المنتجات.";
       guardStatus = "kb_synthesized";
-      guardReason = "تعريف صريح ودقيق بهوية النموذج المحلي وإمكانياته الحقيقية.";
+      guardReason = "تعريف طبيعي بقدرات المساعد.";
       nextTopic = "nawa_model_identity";
+      suggestions = [
+        "اكتب دالة TypeScript لإدارة المهام",
+        "احسب (250 * 4) + 15% من 2000",
+        "حول 4 GB إلى MB",
+      ];
     } else {
       const grounded = groundPromptForTransformer(trimmed, analysis, entities, queryVec);
       neuralGen = lm.generate(grounded.prompt, {

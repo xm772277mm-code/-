@@ -231,7 +231,7 @@ export default function ModelArchitectureView() {
                     <button
                       type="button"
                       onClick={() => updateSettings({ deviceProfile: tierId })}
-                      className="rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors"
+                      className="min-h-[40px] rounded-lg px-3.5 py-2 text-xs font-semibold transition-colors whitespace-nowrap shrink-0"
                       style={{
                         backgroundColor: active ? "var(--nawa-accent)" : "var(--nawa-elevated)",
                         color: active ? "#FFFFFF" : "var(--nawa-text)",
@@ -284,31 +284,46 @@ export default function ModelArchitectureView() {
         <section className="space-y-6">
           <div className="border-b pb-5" style={{ borderColor: "var(--nawa-border)" }}>
             <h2 className="font-display text-2xl font-bold" style={{ textWrap: "balance" }}>
-              معمارية النموذج اللغوي التوليدي الفعلي (NawaLM-Transformer)
+              معمارية النموذج اللغوي التوليدي الفعلي ({lmInfo.name})
             </h2>
             <p className="mt-2 max-w-4xl text-sm leading-relaxed" style={{ color: "var(--nawa-muted)" }}>
-              محول عصبي سببي مبني من الصفر بمحلل BPE فرعي ({lmInfo.config.vocabSize} رمزاً) و{" "}
-              <span className="font-mono font-semibold" style={{ color: "var(--nawa-text)" }}>
+              محول عصبي سببي بمحلل BPE فرعي ({" "}
+              <span className="font-mono tabular-nums font-semibold" style={{ color: "var(--nawa-text)" }}>
+                {lmInfo.config.vocabSize}
+              </span>{" "}
+              رمزاً) و{" "}
+              <span className="font-mono tabular-nums font-semibold" style={{ color: "var(--nawa-text)" }}>
                 {lmInfo.config.nLayers}
               </span>{" "}
               طبقات انتباه ذاتي متعددة الرؤوس (
-              <span className="font-mono font-semibold" style={{ color: "var(--nawa-text)" }}>
+              <span className="font-mono tabular-nums font-semibold" style={{ color: "var(--nawa-text)" }}>
                 {lmInfo.config.nHeads}
               </span>{" "}
               رؤوس · بُعد{" "}
-              <span className="font-mono font-semibold" style={{ color: "var(--nawa-text)" }}>
+              <span className="font-mono tabular-nums font-semibold" style={{ color: "var(--nawa-text)" }}>
                 {lmInfo.config.dModel}
               </span>
               ) وذاكرة KV-Cache قابلة للضغط. يضم{" "}
               <span className="font-mono tabular-nums font-semibold" style={{ color: "var(--nawa-text)" }}>
                 {lmInfo.totalParams.toLocaleString()}
               </span>{" "}
-              معامل تدريب محفوظة فعلياً في ملف{" "}
+              معامل تدريب محفوظة فعلياً في{" "}
               <span className="font-mono" style={{ color: "var(--nawa-accent)" }}>
                 nawa_llm.bin
               </span>
-              .
+              ، مدعوماً بخمسة محركات حتمية مدمجة (توليد الكود · المدقق الأمني · الحاسبة وتحويل الوحدات · الملخص الاستخراجي · القوالب المنظمة).
             </p>
+            <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs" style={{ color: "var(--nawa-muted)" }}>
+              <span>مُولّد الكود متعدد اللغات</span>
+              <span aria-hidden="true">·</span>
+              <span>المدقق الأمني الثابت</span>
+              <span aria-hidden="true">·</span>
+              <span>الحاسبة وتحويل الوحدات</span>
+              <span aria-hidden="true">·</span>
+              <span>الملخّص الاستخراجي</span>
+              <span aria-hidden="true">·</span>
+              <span className="tabular-nums">فهرس 50B/50M</span>
+            </div>
           </div>
 
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
@@ -369,16 +384,8 @@ export default function ModelArchitectureView() {
                 <div className="text-xs" style={{ color: "var(--nawa-muted)" }}>
                   عينة من رموز قاموس BPE المتعلم:
                 </div>
-                <div className="mt-1.5 flex flex-wrap gap-1.5 font-mono text-[11px]" style={{ color: "var(--nawa-accent)" }}>
-                  {lmInfo.sampleTokens.slice(0, 16).map((tok, i) => (
-                    <span
-                      key={i}
-                      className="rounded px-1.5 py-0.5"
-                      style={{ backgroundColor: "var(--nawa-elevated)" }}
-                    >
-                      {tok}
-                    </span>
-                  ))}
+                <div className="mt-1.5 font-mono text-[11px] leading-relaxed whitespace-pre-wrap" style={{ color: "var(--nawa-accent)" }}>
+                  {lmInfo.sampleTokens.slice(0, 16).join("  ·  ")}
                 </div>
               </div>
             </div>
@@ -459,7 +466,7 @@ export default function ModelArchitectureView() {
                   <button
                     type="submit"
                     disabled={lmTrainBusy || !lmPrompt.trim() || !lmResponse.trim()}
-                    className="inline-flex h-9 items-center gap-2 rounded-lg px-4 text-xs font-semibold text-white transition-opacity disabled:opacity-50"
+                    className="inline-flex h-10 items-center gap-2 rounded-lg px-4 text-xs font-semibold text-white transition-opacity disabled:opacity-50 whitespace-nowrap shrink-0"
                     style={{ backgroundColor: "var(--nawa-accent)" }}
                   >
                     <Plus className="h-4 w-4" />

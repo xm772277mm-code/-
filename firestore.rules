@@ -87,6 +87,27 @@ service cloud.firestore {
       && data.createdAt is timestamp;
     }
 
+    function isValidUserUsage(data, userId, monthKey) {
+      return data.keys().hasAll([
+        'ownerId', 'email', 'monthKey', 'requestsCount', 'tokensCount',
+        'lastModel', 'createdAt', 'updatedAt'
+      ])
+      && data.keys().hasOnly([
+        'ownerId', 'email', 'monthKey', 'requestsCount', 'tokensCount',
+        'lastModel', 'createdAt', 'updatedAt'
+      ])
+      && data.ownerId == userId
+      && isValidId(data.ownerId)
+      && data.email is string && data.email.size() >= 3 && data.email.size() <= 150
+      && data.monthKey == monthKey
+      && data.monthKey is string && data.monthKey.size() == 7 && data.monthKey.matches('^[0-9]{4}-[0-9]{2}$')
+      && data.requestsCount is int && data.requestsCount >= 0 && data.requestsCount <= 1000000
+      && data.tokensCount is int && data.tokensCount >= 0 && data.tokensCount <= 1000000000
+      && data.lastModel is string && data.lastModel.size() >= 1 && data.lastModel.size() <= 64
+      && data.createdAt is timestamp
+      && data.updatedAt is timestamp;
+    }
+
     // Users Collection (PII & UI Customization Isolated to Owner)
     match /users/{userId} {
       allow get: if isOwner(userId) && isValidId(userId);
@@ -111,7 +132,7 @@ service cloud.firestore {
       // User Chats Subcollection (Master Gate checks owner)
       match /chats/{chatId} {
         allow get: if isOwner(userId) && isValidId(userId) && isValidId(chatId)
-          && existing().ownerId == request.auth.uid;
+          && (resource == null || existing().ownerId == request.auth.uid);
         allow list: if isOwner(userId) && isValidId(userId)
           && resource.data.ownerId == request.auth.uid;
         allow create: if isOwner(userId)
@@ -137,7 +158,7 @@ service cloud.firestore {
         // Chat Messages Subcollection (Master Gate reads parent chat doc)
         match /messages/{messageId} {
           allow get: if isOwner(userId) && isValidId(userId) && isValidId(chatId) && isValidId(messageId)
-            && existing().ownerId == request.auth.uid;
+            && (resource == null || existing().ownerId == request.auth.uid);
           allow list: if isOwner(userId) && isValidId(userId) && isValidId(chatId)
             && resource.data.ownerId == request.auth.uid;
           allow create: if isOwner(userId)
@@ -151,6 +172,35 @@ service cloud.firestore {
           allow delete: if isOwner(userId) && isValidId(userId) && isValidId(chatId) && isValidId(messageId)
             && existing().ownerId == request.auth.uid;
         }
+      }
+
+      // Per-User Monthly Cloud AI Usage & Quota Ledger
+      match /usage/{monthKey} {
+        allow get: if isOwner(userId) && isValidId(userId) && isValidId(monthKey)
+          && (resource == null || existing().ownerId == request.auth.uid);
+        allow list: if isOwner(userId) && isValidId(userId)
+          && resource.data.ownerId == request.auth.uid;
+        allow create: if isOwner(userId)
+          && isValidId(userId)
+          && isValidId(monthKey)
+          && isValidUserUsage(incoming(), userId, monthKey)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time;
+        allow update: if isOwner(userId)
+          && isValidId(userId)
+          && isValidId(monthKey)
+          && isValidUserUsage(incoming(), userId, monthKey)
+          && existing().ownerId == request.auth.uid
+          && incoming().ownerId == existing().ownerId
+          && incoming().monthKey == existing().monthKey
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().requestsCount >= existing().requestsCount
+          && incoming().tokensCount >= existing().tokensCount
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'email', 'requestsCount', 'tokensCount', 'lastModel', 'updatedAt'
+          ]);
+        allow delete: if false;
       }
     }
   }

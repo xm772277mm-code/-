@@ -1,6 +1,6 @@
 {
   "name": "NawaCore Studio",
-  "description": "نموذج ذكاء اصطناعي مخصص للبرمجة باللهجات العربية يعمل محلياً عبر نواة WebAssembly بسرعة تتجاوز 50 مليون عملية في الثانية مع حزم تصدير EXE و APK.",
+  "description": "مساعد ذكاء اصطناعي عربي متكامل للمحادثة والبرمجة والخرائط والتصميم ثلاثي الأبعاد والوسائط والمهام عبر النموذج السحابي ونموذج صغير (النسخة التجريبية).",
   "requestFramePermissions": ["microphone"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

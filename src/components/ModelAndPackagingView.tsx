@@ -1,10 +1,20 @@
 import React, { useState } from "react";
+import BenchmarkView from "./BenchmarkView.tsx";
 import ModelArchitectureView from "./ModelArchitectureView.tsx";
 import PackagingView from "./PackagingView.tsx";
 import CloudHostingView from "./CloudHostingView.tsx";
 
+type SubTabId = "benchmark" | "packaging" | "model" | "cloud";
+
 export default function ModelAndPackagingView() {
-  const [subTab, setSubTab] = useState<"cloud" | "model" | "packaging">("cloud");
+  const [subTab, setSubTab] = useState<SubTabId>("benchmark");
+
+  const tabs: Array<{ id: SubTabId; label: string }> = [
+    { id: "benchmark", label: "اختبار 50M+ عملية/ثانية" },
+    { id: "packaging", label: "تصدير Windows (.exe) و Android (.apk)" },
+    { id: "model", label: "معمارية النموذج المخصص والتدريب" },
+    { id: "cloud", label: "الاستضافة وحصص الحساب" },
+  ];
 
   return (
     <div>
@@ -16,49 +26,27 @@ export default function ModelAndPackagingView() {
         }}
       >
         <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setSubTab("cloud")}
-            className="rounded-lg px-3.5 py-1.5 text-xs font-semibold transition-colors whitespace-nowrap shrink-0"
-            style={{
-              backgroundColor: subTab === "cloud" ? "var(--nawa-accent)" : "transparent",
-              color: subTab === "cloud" ? "#FFFFFF" : "var(--nawa-muted)",
-            }}
-          >
-            الاستضافة السحابية (Firebase & Google Cloud)
-          </button>
-          <button
-            type="button"
-            onClick={() => setSubTab("model")}
-            className="rounded-lg px-3.5 py-1.5 text-xs font-semibold transition-colors whitespace-nowrap shrink-0"
-            style={{
-              backgroundColor: subTab === "model" ? "var(--nawa-accent)" : "transparent",
-              color: subTab === "model" ? "#FFFFFF" : "var(--nawa-muted)",
-            }}
-          >
-            معمارية النموذج الاحتياطي
-          </button>
-          <button
-            type="button"
-            onClick={() => setSubTab("packaging")}
-            className="rounded-lg px-3.5 py-1.5 text-xs font-semibold transition-colors whitespace-nowrap shrink-0"
-            style={{
-              backgroundColor: subTab === "packaging" ? "var(--nawa-accent)" : "transparent",
-              color: subTab === "packaging" ? "#FFFFFF" : "var(--nawa-muted)",
-            }}
-          >
-            ملفات التثبيت والتصدير (DEB / RUN / PYZ / EXE / APK)
-          </button>
+          {tabs.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setSubTab(tab.id)}
+              className="rounded-lg px-3.5 py-1.5 text-xs font-semibold transition-colors whitespace-nowrap shrink-0"
+              style={{
+                backgroundColor: subTab === tab.id ? "var(--nawa-accent)" : "transparent",
+                color: subTab === tab.id ? "#FFFFFF" : "var(--nawa-muted)",
+              }}
+            >
+              {tab.label}
+            </button>
+          ))}
         </div>
       </div>
 
-      {subTab === "cloud" ? (
-        <CloudHostingView />
-      ) : subTab === "model" ? (
-        <ModelArchitectureView />
-      ) : (
-        <PackagingView />
-      )}
+      {subTab === "benchmark" && <BenchmarkView />}
+      {subTab === "packaging" && <PackagingView />}
+      {subTab === "model" && <ModelArchitectureView />}
+      {subTab === "cloud" && <CloudHostingView />}
     </div>
   );
 }

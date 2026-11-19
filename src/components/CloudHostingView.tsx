@@ -1,11 +1,25 @@
 import React, { useEffect, useState } from "react";
-import { Check, Cloud, Copy, Database, Globe, Server, ShieldCheck } from "lucide-react";
+import {
+  Check,
+  Cloud,
+  Copy,
+  Database,
+  Globe,
+  Info,
+  LogIn,
+  Server,
+  ShieldCheck,
+  UserCheck,
+} from "lucide-react";
+import { useUiSettings } from "../contexts/UiSettingsContext.tsx";
 
 interface HealthStatus {
   status: string;
   service: string;
   engineDefault: string;
   cloudModel: string;
+  cloudAuthRequired?: boolean;
+  billingMode?: string;
   hasGeminiKey: boolean;
   firebaseProjectId: string;
   firestoreDatabaseId: string;
@@ -15,6 +29,8 @@ interface HealthStatus {
 }
 
 export default function CloudHostingView() {
+  const { user, signingIn, signInWithGoogle, dailyQuota, monthlyUsage, refreshDailyQuota } =
+    useUiSettings();
   const [health, setHealth] = useState<HealthStatus | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
@@ -25,7 +41,10 @@ export default function CloudHostingView() {
         if (d) setHealth(d);
       })
       .catch(() => null);
-  }, []);
+    if (user) {
+      void refreshDailyQuota();
+    }
+  }, [user?.uid]);
 
   const copyCommand = async (id: string, text: string) => {
     try {
@@ -61,15 +80,15 @@ export default function CloudHostingView() {
             <div className="flex items-center gap-2">
               <Cloud className="h-5 w-5" style={{ color: "var(--nawa-accent)" }} />
               <h2 className="font-display text-xl font-bold">
-                الاستضافة السحابية على Firebase و Google Cloud
+                الاستضافة السحابية ونظام حصص حسابات Google
               </h2>
             </div>
             <p className="text-sm leading-relaxed" style={{ color: "var(--nawa-muted)" }}>
-              تم تجهيز التطبيق للعمل بنموذج <strong style={{ color: "var(--nawa-text)" }}>Gemini 3.1 Flash Lite</strong>{" "}
-              السحابي الضخم عبر الخادم مع البحث الحي على Google Search، وربطه بملفات النشر الجاهزة لـ{" "}
-              <strong style={{ color: "var(--nawa-text)" }}>Google Cloud Run</strong> و
-              <strong style={{ color: "var(--nawa-text)" }}>Firebase Hosting / App Hosting</strong> و
-              <strong style={{ color: "var(--nawa-text)" }}>Cloud Firestore</strong>.
+              يعمل التطبيق بنموذج{" "}
+              <strong style={{ color: "var(--nawa-text)" }}>Gemini 3.1 Flash Lite</strong> السحابي عبر
+              الخادم مع التحقق الإلزامي من هوية مستخدم Google عبر{" "}
+              <strong style={{ color: "var(--nawa-text)" }}>Firebase Auth ID Token</strong> وربط
+              الاستهلاك والحصة اليومية والشهرية بكل حساب مسجّل.
             </p>
           </div>
 
@@ -83,6 +102,128 @@ export default function CloudHostingView() {
           >
             <ShieldCheck className="h-4 w-4" />
             <span>{health?.status === "ok" ? "الخادم السحابي جاهز" : "جاري فحص الجاهزية..."}</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Per-User Google Account Quota & Honest Billing Explanation */}
+      <div
+        className="rounded-2xl border p-6 space-y-4"
+        style={{
+          backgroundColor: "var(--nawa-surface)",
+          borderColor: "var(--nawa-border)",
+        }}
+      >
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <UserCheck className="h-5 w-5" style={{ color: "var(--nawa-accent)" }} />
+            <h3 className="font-display text-base font-bold">
+              حالة الفوترة والحصص لحساب Google المسجّل
+            </h3>
+          </div>
+          {!user && (
+            <button
+              type="button"
+              disabled={signingIn}
+              onClick={() => void signInWithGoogle()}
+              className="inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-xs font-semibold text-white disabled:opacity-60"
+              style={{ backgroundColor: "var(--nawa-accent)" }}
+            >
+              <LogIn className="h-3.5 w-3.5" />
+              <span>{signingIn ? "جاري الدخول..." : "تسجيل الدخول بحساب Google"}</span>
+            </button>
+          )}
+        </div>
+
+        {user ? (
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+            <div
+              className="rounded-xl border p-4 space-y-1"
+              style={{
+                backgroundColor: "var(--nawa-elevated)",
+                borderColor: "var(--nawa-border)",
+              }}
+            >
+              <div className="text-xs font-semibold" style={{ color: "var(--nawa-muted)" }}>
+                الحساب المسجّل المعتمد
+              </div>
+              <div className="truncate font-mono text-sm font-bold" dir="ltr">
+                {user.email}
+              </div>
+              <div className="truncate font-mono text-[11px]" style={{ color: "var(--nawa-muted)" }} dir="ltr">
+                UID: {user.uid}
+              </div>
+            </div>
+
+            <div
+              className="rounded-xl border p-4 space-y-1"
+              style={{
+                backgroundColor: "var(--nawa-elevated)",
+                borderColor: "var(--nawa-border)",
+              }}
+            >
+              <div className="text-xs font-semibold" style={{ color: "var(--nawa-muted)" }}>
+                الحصة اليومية على الخادم ({dailyQuota?.dayKey || "اليوم"})
+              </div>
+              <div className="font-mono text-sm font-bold tabular-nums" dir="ltr">
+                {dailyQuota
+                  ? `${dailyQuota.requestsToday} / ${dailyQuota.dailyRequestLimit} req`
+                  : "0 / 60 req"}
+              </div>
+              <div className="font-mono text-[11px] tabular-nums" style={{ color: "var(--nawa-muted)" }} dir="ltr">
+                {dailyQuota
+                  ? `${dailyQuota.tokensToday.toLocaleString()} / ${dailyQuota.dailyTokenLimit.toLocaleString()} tok`
+                  : "0 / 150,000 tok"}
+              </div>
+            </div>
+
+            <div
+              className="rounded-xl border p-4 space-y-1"
+              style={{
+                backgroundColor: "var(--nawa-elevated)",
+                borderColor: "var(--nawa-border)",
+              }}
+            >
+              <div className="text-xs font-semibold" style={{ color: "var(--nawa-muted)" }}>
+                السجل الشهري في Firestore ({monthlyUsage?.monthKey || "الشهر الحالي"})
+              </div>
+              <div className="font-mono text-sm font-bold tabular-nums" dir="ltr">
+                {monthlyUsage ? `${monthlyUsage.requestsCount} طلبات` : "0 طلبات"}
+              </div>
+              <div className="font-mono text-[11px] tabular-nums" style={{ color: "var(--nawa-muted)" }} dir="ltr">
+                {monthlyUsage ? `${monthlyUsage.tokensCount.toLocaleString()} توكن` : "0 توكن"}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div
+            className="rounded-xl border p-4 text-xs leading-relaxed"
+            style={{
+              backgroundColor: "var(--nawa-elevated)",
+              borderColor: "var(--nawa-border)",
+              color: "var(--nawa-muted)",
+            }}
+          >
+            المستخدمون غير المسجّلين لا يمكنهم استهلاك المحرك السحابي (يتم طلب تسجيل الدخول بحساب Google أولاً)، بينما يظل «نموذج صغير (النسخة التجريبية)» متاحاً مجاناً للجميع.
+          </div>
+        )}
+
+        <div
+          className="flex items-start gap-2.5 rounded-xl border p-4 text-xs leading-relaxed"
+          style={{
+            backgroundColor: "var(--nawa-elevated)",
+            borderColor: "var(--nawa-border)",
+            color: "var(--nawa-muted)",
+          }}
+        >
+          <Info className="mt-0.5 h-4 w-4 shrink-0" style={{ color: "var(--nawa-accent)" }} />
+          <div className="space-y-1">
+            <div className="font-semibold" style={{ color: "var(--nawa-text)" }}>
+              آلية الفوترة الفعلية في Google Cloud و Gemini API:
+            </div>
+            <p>
+              يتم الآن التحقق من رمز هوية Google (<span className="font-mono">verifyIdToken</span>) قبل أي طلب سحابي مع فرض حد استهلاك يومي وشهري منفصل لكل مستخدم لمنع الاستهلاك المجهول. أما الفوترة المالية المباشرة لـ Gemini API فتُخصم تقنياً من مشروع Google Cloud المرتبط بمفتاح الخادم (<span className="font-mono">GEMINI_API_KEY</span> في لوحة <strong style={{ color: "var(--nawa-text)" }}>Settings &gt; Secrets</strong>) ولا تدعم Google سحب الفاتورة تلقائياً من المحفظة الشخصية للزائر بمجرد تسجيل دخوله بـ Google Auth. إذا أردت نقل الفوترة الأساسية للمشروع إلى حساب Google آخر، بدّل المفتاح والمشروع من <strong style={{ color: "var(--nawa-text)" }}>Settings &gt; Secrets</strong> أو انشر الخدمة على Cloud Run تحت ذلك الحساب.
+            </p>
           </div>
         </div>
       </div>
@@ -104,7 +245,7 @@ export default function CloudHostingView() {
             {health?.cloudModel || "gemini-3.1-flash-lite"}
           </div>
           <p className="text-xs leading-relaxed" style={{ color: "var(--nawa-muted)" }}>
-            يعمل عبر واجهة الخادم الآمنة مع مستويات التفكير العميق (HIGH / XHIGH) وتوثيق المصادر عبر Google Search.
+            يعمل عبر واجهة الخادم المحمية بتحقق هوية Google مع البحث الحي عبر Google Search.
           </p>
         </div>
 
@@ -143,7 +284,7 @@ export default function CloudHostingView() {
             {health?.firebaseProjectId || "poised-subject-cfx4d"}
           </div>
           <p className="text-xs leading-relaxed" style={{ color: "var(--nawa-muted)" }}>
-            توجيه تلقائي لطلبات <span className="font-mono">/api/**</span> إلى Cloud Run مع حفظ الحسابات والمحادثات في Firestore.
+            توجيه تلقائي لطلبات <span className="font-mono">/api/**</span> إلى Cloud Run مع حفظ الحسابات والمحادثات وسجل الاستهلاك في Firestore.
           </p>
         </div>
       </div>

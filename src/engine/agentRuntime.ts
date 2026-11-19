@@ -44,7 +44,7 @@ export function ensureWorkspaceSeeded(): void {
   if (existing.length === 0) {
     fs.writeFileSync(
       path.join(WORKSPACE_DIR, "README.md"),
-      `# NawaCore Workspace\n\nبيئة العمل المعزولة للوكيل البرمجي المحلي (نواة 50M).\nيمكنك مطالبة الوكيل بأي لهجة عربية لإنشاء ملفات برمجية، قواعد بيانات SQLite، أنظمة مصادقة، قراءتها، فحص أخطائها، أو اختبارها مباشرة.\n`,
+      `# NawaCore Workspace\n\nبيئة العمل البرمجية من نواة.\nيمكنك كتابة طلبك بأي لهجة عربية لإنشاء ملفات برمجية، قواعد بيانات SQLite، أنظمة مصادقة، قراءتها، فحص أخطائها، أو اختبارها مباشرة.\n`,
       "utf-8"
     );
     fs.writeFileSync(
@@ -801,7 +801,7 @@ if __name__ == "__main__":
 <body>
   <div class="panel">
     <h1>واجهة ويب تفاعلية مولّدة محلياً</h1>
-    <p>تم توليد هذا الملف عبر نموذج NawaCore-50M v2 بدون أي استدعاء لنماذج خارجية.</p>
+    <p>تم توليد هذه الصفحة التفاعلية عبر استوديو نواة.</p>
     <input id="val" type="number" value="50000000" />
     <button onclick="calc()">احسب الزمن المتوقع</button>
     <div id="out" class="out"></div>
@@ -869,14 +869,14 @@ if __name__ == "__main__":
           "edit_file",
           {
             path: "README.md",
-            old_text: "بيئة العمل المعزولة للوكيل البرمجي المحلي (نواة 50M).",
-            new_text: "بيئة العمل المعزولة للوكيل البرمجي المحلي (نواة 50M v2) — تم التحديث والتحقق آلياً.",
+            old_text: "بيئة العمل البرمجية من نواة.",
+            new_text: "بيئة العمل البرمجية من نواة — تم التحديث والتحقق آلياً.",
           },
           () =>
             editFileTool(
               "README.md",
-              "بيئة العمل المعزولة للوكيل البرمجي المحلي (نواة 50M).",
-              "بيئة العمل المعزولة للوكيل البرمجي المحلي (نواة 50M v2) — تم التحديث والتحقق آلياً."
+              "بيئة العمل البرمجية من نواة.",
+              "بيئة العمل البرمجية من نواة — تم التحديث والتحقق آلياً."
             )
         );
         reply = `قمت بفحص \`${targetFile}\` وتطبيق التعديل المطلوب:\n\`${res}\``;
@@ -918,7 +918,7 @@ if __name__ == "__main__":
       const cppKernel = `#include <immintrin.h>
 #include <cstdint>
 
-// NawaCore C++20 AVX2 + FMA Neural Kernel (50M+ ops/sec verified)
+// NawaCore C++20 AVX2 + FMA Vector Dot Product
 float dot_avx2_fma(const float* __restrict a, const float* __restrict b, size_t n) {
     __m256 acc0 = _mm256_setzero_ps();
     __m256 acc1 = _mm256_setzero_ps();
@@ -947,7 +947,7 @@ float dot_avx2_fma(const float* __restrict a, const float* __restrict b, size_t 
       planSteps.push("استكشاف حالة بيئة العمل الحالية لتخصيص الاقتراحات");
       const tree = execTool("list_files", { directory: "." }, () => listFiles("."));
       const count = tree.split("\n").filter((l) => l.startsWith("[FILE]")).length;
-      reply = `أهلاً بك! أنا **NawaCore-50M v2** (معمارية \`512 → 192 → 96 → 16\` بذاكرة سياقية وتخطيط متعدد الخطوات).\nيوجد حالياً **${count} ملفات** في \`workspace/\`.\n\nجرّب معي الآن طلبات متطورة بأي لهجة:\n- *"اعملي قاعدة بيانات SQLite للمنتجات والمخزون واختبرها"*\n- *"سويلي نظام مصادقة وتشفير كلمات المرور واختبره"*\n- *"اعمل API للموظفين بـ Node.js مع اختبارات"*\n- *"افحص ملفات المشروع وشوف لو فيها اخطاء"*`;
+      reply = `أهلاً بك! أنا **نواة**، مساعدك البرمجي لبناء واختبار المشاريع.\nيوجد حالياً **${count} ملفات** في مساحة العمل.\n\nجرّب معي الآن طلبات مثل:\n- *"اعملي قاعدة بيانات SQLite للمنتجات والمخزون واختبرها"*\n- *"سويلي نظام مصادقة وتشفير كلمات المرور واختبره"*\n- *"اعمل API للموظفين بـ Node.js مع اختبارات"*\n- *"افحص ملفات المشروع وشوف لو فيها اخطاء"*`;
       break;
     }
   }
@@ -982,6 +982,6 @@ float dot_avx2_fma(const float* __restrict a, const float* __restrict b, size_t 
     suggestedFollowUps: suggestedFollowUps.slice(0, 4),
     activeContext: { ...sessionContext },
     prediction,
-    model: "NawaCore-50M v2 (WASM Native)",
+    model: "نواة",
   };
 }

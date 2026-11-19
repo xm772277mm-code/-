@@ -1,11 +1,21 @@
 import { GoogleGenAI, ThinkingLevel, type Content, type GenerateContentResponse } from "@google/genai";
 
+export type CloudModelId =
+  | "gemini-3.1-flash-lite"
+  | "gemini-4-hydrogen"
+  | "gemini-4-neon"
+  | "gemini-4-carbon";
+
 export type CloudThinkingMode = "fast" | "auto" | "deep";
 export type CloudResponseStyle = "auto" | "simple" | "detailed" | "concise";
+export type CloudGroundingMode = "none" | "search" | "maps";
+export type CloudSystemRole = "assistant" | "coder" | "tutor" | "analyst";
 
 export interface GroundingSource {
   title: string;
   uri: string;
+  kind?: "web" | "maps";
+  snippet?: string;
 }
 
 export interface CloudChatTurn {
@@ -19,7 +29,11 @@ export interface CloudGeminiRequest {
   compressedSummary?: string | null;
   style?: CloudResponseStyle;
   thinkingMode?: CloudThinkingMode;
+  modelId?: CloudModelId;
+  systemRole?: CloudSystemRole;
+  groundingMode?: CloudGroundingMode;
   searchGrounding?: boolean;
+  userLocation?: { latitude: number; longitude: number } | null;
   preferredDialect?: string;
 }
 
@@ -46,7 +60,7 @@ function getGeminiClient(): GoogleGenAI {
     cachedClient = new GoogleGenAI({
       apiKey,
       httpOptions: {
-        timeout: 45000,
+        timeout: 60000,
         retryOptions: {
           attempts: 1,
         },
@@ -61,8 +75,18 @@ function getGeminiClient(): GoogleGenAI {
 
 function buildSystemInstruction(
   style: CloudResponseStyle = "auto",
+  systemRole: CloudSystemRole = "assistant",
   compressedSummary?: string | null
 ): string {
+  const roleDirective =
+    systemRole === "coder"
+      ? "دورك: مهندس برمجيات خبير ومعماري أنظمة. ركّز على الكود النظيف، الأداء، الأمان، وأمثلة TypeScript/Python/SQL العملية."
+      : systemRole === "tutor"
+        ? "دورك: معلّم ومبسّط علوم وتقنية. اشرح المفاهيم بالتدريج مع أمثلة واقعية واضحة وأسئلة تفاعلية قصيرة."
+        : systemRole === "analyst"
+          ? "دورك: محلل استراتيجي ومالي وتقني. قدّم تحليلات منظمة بجداول مقارنة، مخاطر، وتوصيات عملية قابلة للتنفيذ."
+          : "دورك: مساعد ذكي متكامل واسع المعرفة للكتابة والبرمجة والتخطيط والحياة اليومية.";
+
   const styleDirective =
     style === "concise"
       ? "قدّم إجابات مركّزة ومباشرة ومختصرة دون حشو."
@@ -73,22 +97,34 @@ function buildSystemInstruction(
           : "وازن بين الوضوح والعمق العملي حسب طبيعة السؤال.";
 
   const memoryDirective = compressedSummary
-    ? `\nملخص السياق المضغوط للجلسة السابقة:\n${compressedSummary}`
+    ? `\nملخص السياق السابق للجلسة:\n${compressedSummary}`
     : "";
 
   return [
-    "أنت «نواة» (NawaCore Cloud)، مساعد ذكاء اصطناعي سحابي متطور واسع المعرفة يعمل على البنية السحابية لـ Google Cloud و Firebase.",
-    "تتحدث العربية (الفصحى واللهجات العربية مثل المصرية والخليجية والشامية والمغاربية) والإنجليزية بطلاقة تامة وتفهم القصد حتى لو احتوت الرسالة على أخطاء إملائية أو تعبيرات عامية أو صياغة غير مكتملة.",
+    "أنت «نواة» (NawaCore Cloud)، مساعد ذكاء اصطناعي متطور يعمل على البنية السحابية لـ Google Cloud.",
+    roleDirective,
+    "تتحدث العربية (الفصحى واللهجات العربية مثل المصرية والخليجية والشامية والمغاربية) والإنجليزية بطلاقة تامة وتفهم القصد حتى لو احتوت الرسالة على أخطاء إملائية أو تعبيرات عامية.",
     "التزم بالدقة العلمية والبرمجية والوضوح في تنسيق Markdown (عناوين قصيرة، نقاط منظمة، وأكواد نظيفة داخل ```).",
-    "لا تخترع معلومات إذا لم تكن متأكداً، وإذا استندت إلى بحث Google فاذكر المعلومات بوضوح ومباشرة.",
+    "عند استخدام بيانات البحث أو خرائط Google، اعتمد على البيانات المرجعية المرفقة وأجب بدقة ووضوح.",
     `توجيه الأسلوب: ${styleDirective}${memoryDirective}`,
   ].join("\n");
 }
 
-function mapThinkingLevel(mode: CloudThinkingMode = "auto"): ThinkingLevel | undefined {
-  if (mode === "fast") return ThinkingLevel.LOW;
-  if (mode === "deep") return ThinkingLevel.XHIGH;
-  return undefined;
+function mapThinkingLevelForModel(
+  modelName: CloudModelId,
+  mode: CloudThinkingMode = "auto"
+): ThinkingLevel | undefined {
+  if (mode === "auto") return undefined;
+
+  if (modelName === "gemini-3.1-flash-lite") {
+    return mode === "fast" ? ThinkingLevel.MINIMAL : ThinkingLevel.HIGH;
+  }
+  if (modelName === "gemini-4-carbon") {
+    // Gemini 4 Carbon supports LOW/MEDIUM/HIGH (never XHIGH or MINIMAL)
+    return mode === "fast" ? ThinkingLevel.LOW : ThinkingLevel.HIGH;
+  }
+  // gemini-4-hydrogen / gemini-4-neon support LOW/MEDIUM/HIGH/XHIGH
+  return mode === "fast" ? ThinkingLevel.LOW : ThinkingLevel.XHIGH;
 }
 
 function buildContents(history: CloudChatTurn[], currentMessage: string): Content[] {
@@ -109,17 +145,40 @@ function extractGroundingSources(resp: GenerateContentResponse | undefined): Gro
   if (!Array.isArray(chunks)) return [];
   const seen = new Set<string>();
   const sources: GroundingSource[] = [];
+
   for (const ch of chunks) {
-    const web = (ch as { web?: { uri?: string; title?: string } })?.web;
-    if (web?.uri && !seen.has(web.uri)) {
-      seen.add(web.uri);
+    const chunkObj = ch as {
+      web?: { uri?: string; title?: string };
+      maps?: {
+        uri?: string;
+        title?: string;
+        placeAnswerSources?: {
+          reviewSnippets?: Array<{ content?: string; author?: string }>;
+        };
+      };
+    };
+
+    if (chunkObj.maps?.uri && !seen.has(chunkObj.maps.uri)) {
+      seen.add(chunkObj.maps.uri);
+      const firstReview = chunkObj.maps.placeAnswerSources?.reviewSnippets?.find(
+        (r) => typeof r?.content === "string" && r.content.trim().length > 0
+      );
       sources.push({
-        uri: web.uri,
-        title: (web.title || web.uri).trim(),
+        uri: chunkObj.maps.uri,
+        title: (chunkObj.maps.title || "موقع على خرائط Google").trim(),
+        kind: "maps",
+        snippet: firstReview?.content?.trim().slice(0, 180),
+      });
+    } else if (chunkObj.web?.uri && !seen.has(chunkObj.web.uri)) {
+      seen.add(chunkObj.web.uri);
+      sources.push({
+        uri: chunkObj.web.uri,
+        title: (chunkObj.web.title || chunkObj.web.uri).trim(),
+        kind: "web",
       });
     }
   }
-  return sources.slice(0, 8);
+  return sources.slice(0, 10);
 }
 
 export function normalizeGeminiApiError(err: unknown): { statusCode: number; message: string } {
@@ -152,13 +211,13 @@ export function normalizeGeminiApiError(err: unknown): { statusCode: number; mes
   if (/AbortError|aborted|ETIMEDOUT|timeout|DEADLINE_EXCEEDED|504/i.test(rawMsg)) {
     return {
       statusCode: 504,
-      message: "انتهت مهلة الاستجابة من خادم النموذج السحابي (504 DEADLINE_EXCEEDED). يرجى إعادة المحاولة أو التبديل مؤقتاً إلى الوضع المحلي.",
+      message: "انتهت مهلة الاستجابة من الخادم السحابي (504). يرجى إعادة المحاولة أو استخدام نموذج صغير (النسخة التجريبية).",
     };
   }
   if (/UNAVAILABLE|high demand|503/i.test(rawMsg) && !/GEMINI_API_KEY/.test(rawMsg)) {
     return {
       statusCode: 503,
-      message: "النموذج السحابي (Gemini 4 Hydrogen) يشهد ضغط طلبات مرتفع حالياً (503 UNAVAILABLE). حاول مرة أخرى بعد لحظات أو بدّل مؤقتاً إلى الوضع المحلي.",
+      message: "الخدمة السحابية تشهد ضغط طلبات مرتفع حالياً (503). حاول مرة أخرى بعد لحظات أو استخدم نموذج صغير (النسخة التجريبية).",
     };
   }
   if (/GEMINI_API_KEY/.test(rawMsg)) {
@@ -170,40 +229,142 @@ export function normalizeGeminiApiError(err: unknown): { statusCode: number; mes
   };
 }
 
+function isQuotaOrTransientError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /RESOURCE_EXHAUSTED|429|quota|UNAVAILABLE|high demand|503/i.test(msg);
+}
+
+interface CloudAttemptPlan {
+  modelName: CloudModelId;
+  grounding: CloudGroundingMode;
+}
+
+function normalizeModelId(id?: string): CloudModelId {
+  if (
+    id === "gemini-4-hydrogen" ||
+    id === "gemini-4-neon" ||
+    id === "gemini-4-carbon" ||
+    id === "gemini-3.1-flash-lite"
+  ) {
+    return id;
+  }
+  return "gemini-3.1-flash-lite";
+}
+
+function buildAttemptPlans(
+  requestedModel: CloudModelId,
+  groundingMode: CloudGroundingMode
+): CloudAttemptPlan[] {
+  const plans: CloudAttemptPlan[] = [];
+
+  if (groundingMode === "maps") {
+    // Google Maps Grounding requires gemini-4-hydrogen and CANNOT be combined with googleSearch
+    plans.push({ modelName: "gemini-4-hydrogen", grounding: "maps" });
+    plans.push({ modelName: "gemini-4-hydrogen", grounding: "none" });
+    return plans;
+  }
+
+  if (groundingMode === "search") {
+    plans.push({ modelName: requestedModel, grounding: "search" });
+    plans.push({ modelName: requestedModel, grounding: "none" });
+  } else {
+    plans.push({ modelName: requestedModel, grounding: "none" });
+  }
+
+  if (requestedModel !== "gemini-4-hydrogen") {
+    plans.push({ modelName: "gemini-4-hydrogen", grounding: "none" });
+  } else {
+    plans.push({ modelName: "gemini-3.1-flash-lite", grounding: "none" });
+  }
+  return plans;
+}
+
+function buildRequestConfig(
+  plan: CloudAttemptPlan,
+  req: CloudGeminiRequest
+): Record<string, unknown> {
+  const thinkingLevel = mapThinkingLevelForModel(plan.modelName, req.thinkingMode);
+  const config: Record<string, unknown> = {
+    systemInstruction: buildSystemInstruction(
+      req.style,
+      req.systemRole,
+      req.compressedSummary
+    ),
+  };
+
+  if (thinkingLevel) {
+    config.thinkingConfig = { thinkingLevel };
+  }
+
+  if (plan.grounding === "maps") {
+    config.tools = [{ googleMaps: {} }];
+    if (
+      req.userLocation &&
+      Number.isFinite(req.userLocation.latitude) &&
+      Number.isFinite(req.userLocation.longitude)
+    ) {
+      config.toolConfig = {
+        retrievalConfig: {
+          latLng: {
+            latitude: req.userLocation.latitude,
+            longitude: req.userLocation.longitude,
+          },
+        },
+      };
+    }
+  } else if (plan.grounding === "search") {
+    config.tools = [{ googleSearch: {} }];
+  }
+
+  return config;
+}
+
 export async function generateCloudGeminiReply(
   req: CloudGeminiRequest
 ): Promise<CloudGeminiResult> {
   const t0 = performance.now();
   const ai = getGeminiClient();
-  const modelName = "gemini-3.1-flash-lite";
-  const thinkingLevel = mapThinkingLevel(req.thinkingMode);
+  const requestedModel = normalizeModelId(req.modelId);
+  const effectiveGrounding: CloudGroundingMode =
+    req.groundingMode || (req.searchGrounding ? "search" : "none");
+  const plans = buildAttemptPlans(requestedModel, effectiveGrounding);
 
-  const response = await ai.models.generateContent({
-    model: modelName,
-    contents: buildContents(req.history, req.message),
-    config: {
-      systemInstruction: buildSystemInstruction(req.style, req.compressedSummary),
-      ...(thinkingLevel ? { thinkingConfig: { thinkingLevel } } : {}),
-      ...(req.searchGrounding !== false ? { tools: [{ googleSearch: {} }] } : {}),
-    },
-  });
+  let lastErr: unknown;
+  for (let i = 0; i < plans.length; i++) {
+    const plan = plans[i];
+    const thinkingLevel = mapThinkingLevelForModel(plan.modelName, req.thinkingMode);
+    try {
+      const response = await ai.models.generateContent({
+        model: plan.modelName,
+        contents: buildContents(req.history, req.message),
+        config: buildRequestConfig(plan, req),
+      });
 
-  const reply = (response.text || "").trim();
-  if (!reply) {
-    throw new Error("أعاد النموذج السحابي استجابة فارغة.");
+      const reply = (response.text || "").trim();
+      if (!reply) {
+        throw new Error("أعاد النموذج السحابي استجابة فارغة.");
+      }
+
+      const latencyMs = Math.round(performance.now() - t0);
+      const usageTokens =
+        response.usageMetadata?.totalTokenCount || Math.ceil(reply.length / 3);
+
+      return {
+        reply,
+        modelName: plan.modelName,
+        thinkingLevelUsed: thinkingLevel ? String(thinkingLevel) : "AUTO",
+        groundingSources: extractGroundingSources(response),
+        usageTokens,
+        latencyMs,
+      };
+    } catch (err) {
+      lastErr = err;
+      if (!isQuotaOrTransientError(err) || i === plans.length - 1) {
+        throw err;
+      }
+    }
   }
-
-  const latencyMs = Math.round(performance.now() - t0);
-  const usageTokens = response.usageMetadata?.totalTokenCount || Math.ceil(reply.length / 3);
-
-  return {
-    reply,
-    modelName,
-    thinkingLevelUsed: thinkingLevel ? String(thinkingLevel) : "AUTO",
-    groundingSources: extractGroundingSources(response),
-    usageTokens,
-    latencyMs,
-  };
+  throw lastErr;
 }
 
 export async function streamCloudGeminiReply(
@@ -212,58 +373,72 @@ export async function streamCloudGeminiReply(
 ): Promise<CloudGeminiResult> {
   const t0 = performance.now();
   const ai = getGeminiClient();
-  const modelName = "gemini-3.1-flash-lite";
-  const thinkingLevel = mapThinkingLevel(req.thinkingMode);
+  const requestedModel = normalizeModelId(req.modelId);
+  const effectiveGrounding: CloudGroundingMode =
+    req.groundingMode || (req.searchGrounding ? "search" : "none");
+  const plans = buildAttemptPlans(requestedModel, effectiveGrounding);
 
-  const stream = await ai.models.generateContentStream({
-    model: modelName,
-    contents: buildContents(req.history, req.message),
-    config: {
-      systemInstruction: buildSystemInstruction(req.style, req.compressedSummary),
-      ...(thinkingLevel ? { thinkingConfig: { thinkingLevel } } : {}),
-      ...(req.searchGrounding !== false ? { tools: [{ googleSearch: {} }] } : {}),
-    },
-  });
+  let lastErr: unknown;
+  for (let i = 0; i < plans.length; i++) {
+    const plan = plans[i];
+    const thinkingLevel = mapThinkingLevelForModel(plan.modelName, req.thinkingMode);
+    let emittedAnyChunk = false;
+    try {
+      const stream = await ai.models.generateContentStream({
+        model: plan.modelName,
+        contents: buildContents(req.history, req.message),
+        config: buildRequestConfig(plan, req),
+      });
 
-  let fullReply = "";
-  let lastResp: GenerateContentResponse | undefined;
-  let usageTokens = 0;
-  const collectedSources: GroundingSource[] = [];
-  const seenUris = new Set<string>();
+      let fullReply = "";
+      let lastResp: GenerateContentResponse | undefined;
+      let usageTokens = 0;
+      const collectedSources: GroundingSource[] = [];
+      const seenUris = new Set<string>();
 
-  for await (const chunk of stream) {
-    lastResp = chunk;
-    const textPart = chunk.text || "";
-    if (textPart) {
-      fullReply += textPart;
-      onChunk(textPart);
-    }
-    for (const src of extractGroundingSources(chunk)) {
-      if (!seenUris.has(src.uri)) {
-        seenUris.add(src.uri);
-        collectedSources.push(src);
+      for await (const chunk of stream) {
+        lastResp = chunk;
+        const textPart = chunk.text || "";
+        if (textPart) {
+          emittedAnyChunk = true;
+          fullReply += textPart;
+          onChunk(textPart);
+        }
+        for (const src of extractGroundingSources(chunk)) {
+          if (!seenUris.has(src.uri)) {
+            seenUris.add(src.uri);
+            collectedSources.push(src);
+          }
+        }
+        if (chunk.usageMetadata?.totalTokenCount) {
+          usageTokens = chunk.usageMetadata.totalTokenCount;
+        }
+      }
+
+      if (!fullReply.trim() && lastResp?.text) {
+        emittedAnyChunk = true;
+        fullReply = lastResp.text;
+        onChunk(fullReply);
+      }
+
+      if (!fullReply.trim()) {
+        throw new Error("أعاد البث السحابي استجابة فارغة.");
+      }
+
+      return {
+        reply: fullReply.trim(),
+        modelName: plan.modelName,
+        thinkingLevelUsed: thinkingLevel ? String(thinkingLevel) : "AUTO",
+        groundingSources: collectedSources.slice(0, 10),
+        usageTokens: usageTokens || Math.ceil(fullReply.length / 3),
+        latencyMs: Math.round(performance.now() - t0),
+      };
+    } catch (err) {
+      lastErr = err;
+      if (emittedAnyChunk || !isQuotaOrTransientError(err) || i === plans.length - 1) {
+        throw err;
       }
     }
-    if (chunk.usageMetadata?.totalTokenCount) {
-      usageTokens = chunk.usageMetadata.totalTokenCount;
-    }
   }
-
-  if (!fullReply.trim() && lastResp?.text) {
-    fullReply = lastResp.text;
-    onChunk(fullReply);
-  }
-
-  if (!fullReply.trim()) {
-    throw new Error("أعاد البث السحابي استجابة فارغة.");
-  }
-
-  return {
-    reply: fullReply.trim(),
-    modelName,
-    thinkingLevelUsed: thinkingLevel ? String(thinkingLevel) : "AUTO",
-    groundingSources: collectedSources.slice(0, 8),
-    usageTokens: usageTokens || Math.ceil(fullReply.length / 3),
-    latencyMs: Math.round(performance.now() - t0),
-  };
+  throw lastErr;
 }

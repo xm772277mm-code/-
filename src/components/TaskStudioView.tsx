@@ -1,7 +1,17 @@
-import React, { useState } from "react";
-import { Bug, Cpu, Database, FileCode2, Play, Server, ShieldCheck, Terminal } from "lucide-react";
+import React, { useEffect, useState } from "react";
+import { BookMarked, Bug, Cpu, Database, FileCode2, Play, Plus, Server, ShieldCheck, Terminal, Trash2 } from "lucide-react";
+import { useUiSettings } from "../contexts/UiSettingsContext.tsx";
+import { getGoogleAuthHeaders } from "../firebase.ts";
 
-type IsolatedTaskId = "apis" | "databases" | "security" | "algorithms" | "debugger";
+type IsolatedTaskId = "apis" | "databases" | "security" | "algorithms" | "debugger" | "notes";
+
+interface UserNoteItem {
+  id: number;
+  title: string;
+  content: string;
+  category: string;
+  updatedAt: string;
+}
 
 interface TaskRunState {
   busy: boolean;
@@ -36,42 +46,50 @@ const TASK_TABS: Array<{
   {
     id: "apis",
     label: "بناء APIs",
-    title: "مهمة معزولة: بناء خوادم REST API واختبارها",
-    description: "توليد واجهة برمجية كاملة بـ Python أو Node.js مع اختبارات وحدة وتنفيذ فوري.",
+    title: "بناء خوادم REST API واختبارها",
+    description: "توليد واجهة برمجية كاملة بـ Python أو Node.js مع اختبارات وتنفيذ فوري.",
     scope: "create_fastapi_api",
     icon: Server,
   },
   {
     id: "databases",
     label: "قواعد SQLite",
-    title: "مهمة معزولة: تصميم قواعد بيانات SQLite",
-    description: "بناء جداول وفهارس بحث مع استعلامات محمية ضد SQL Injection واختبارات تكامل.",
+    title: "تصميم قواعد بيانات SQLite",
+    description: "بناء جداول وفهارس بحث مع استعلامات محمية واختبارات تكامل.",
     scope: "create_database_app",
     icon: Database,
   },
   {
     id: "security",
     label: "الأمان والمصادقة",
-    title: "مهمة معزولة: التشفير والمصادقة الآمنة",
-    description: "توليد وحدة تجزئة PBKDF2-SHA256 وتوكنات HMAC-SHA256 مقاومة للتلاعب.",
+    title: "التشفير والمصادقة الآمنة",
+    description: "توليد وحدة تجزئة كلمات المرور وتوكنات الجلسة الآمنة.",
     scope: "create_auth_security",
     icon: ShieldCheck,
   },
   {
     id: "algorithms",
     label: "الخوارزميات و C++",
-    title: "مهمة معزولة: الخوارزميات عالية الأداء",
-    description: "توليد واختبار خوارزميات الفرز السريعة أو نوى C++20 بتعليمات AVX2.",
+    title: "الخوارزميات عالية الأداء",
+    description: "توليد واختبار خوارزميات الفرز السريعة أو نوى C++ عالية الأداء.",
     scope: "create_algorithm_bench",
     icon: Cpu,
   },
   {
     id: "debugger",
     label: "فحص وإصلاح الأخطاء",
-    title: "مهمة معزولة: التشخيص والفحص النحوي الشامل",
-    description: "فحص ملفات Python و JavaScript في بيئة العمل وتشغيل جميع الاختبارات المكتشفة.",
+    title: "الفحص النحوي والتشخيص الشامل",
+    description: "فحص ملفات المشروع وتشغيل الاختبارات لاكتشاف الأخطاء.",
     scope: "debug_and_fix",
     icon: Bug,
+  },
+  {
+    id: "notes",
+    label: "دفتر الملاحظات",
+    title: "دفتر الملاحظات والمهام المحفوظة",
+    description: "احفظ ملاحظاتك ومقتطفات الكود وأفكار مشاريعك في حسابك.",
+    scope: "user_notes",
+    icon: BookMarked,
   },
 ];
 
@@ -85,6 +103,7 @@ const DOMAINS = [
 ];
 
 export default function TaskStudioView() {
+  const { user, signInWithGoogle } = useUiSettings();
   const [activeTask, setActiveTask] = useState<IsolatedTaskId>("apis");
 
   const [taskStates, setTaskStates] = useState<Record<IsolatedTaskId, TaskRunState>>({
@@ -93,7 +112,68 @@ export default function TaskStudioView() {
     security: { ...INITIAL_TASK_STATE },
     algorithms: { ...INITIAL_TASK_STATE },
     debugger: { ...INITIAL_TASK_STATE },
+    notes: { ...INITIAL_TASK_STATE },
   });
+
+  const [notes, setNotes] = useState<UserNoteItem[]>([]);
+  const [noteTitle, setNoteTitle] = useState("");
+  const [noteContent, setNoteContent] = useState("");
+  const [noteBusy, setNoteBusy] = useState(false);
+
+  const loadNotes = async () => {
+    if (!user) {
+      setNotes([]);
+      return;
+    }
+    try {
+      const headers = await getGoogleAuthHeaders();
+      const res = await fetch("/api/sql/notes", { headers });
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data.notes)) setNotes(data.notes);
+      }
+    } catch {
+      // ignore
+    }
+  };
+
+  useEffect(() => {
+    void loadNotes();
+  }, [user?.uid]);
+
+  const handleSaveNote = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!noteTitle.trim() || !noteContent.trim() || noteBusy) return;
+    if (!user) {
+      await signInWithGoogle();
+      return;
+    }
+    setNoteBusy(true);
+    try {
+      const headers = await getGoogleAuthHeaders();
+      const res = await fetch("/api/sql/notes", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ title: noteTitle, content: noteContent, category: "workspace" }),
+      });
+      if (res.ok) {
+        setNoteTitle("");
+        setNoteContent("");
+        await loadNotes();
+      }
+    } finally {
+      setNoteBusy(false);
+    }
+  };
+
+  const handleDeleteNote = async (id: number) => {
+    if (!user) return;
+    const headers = await getGoogleAuthHeaders();
+    const res = await fetch(`/api/sql/notes/${id}`, { method: "DELETE", headers });
+    if (res.ok) {
+      setNotes((prev) => prev.filter((n) => n.id !== id));
+    }
+  };
 
   const [apiDomain, setApiDomain] = useState("المنتجات");
   const [apiRuntime, setApiRuntime] = useState<"python" | "node">("python");
@@ -104,6 +184,7 @@ export default function TaskStudioView() {
     security: "",
     algorithms: "",
     debugger: "",
+    notes: "",
   });
 
   const currentTabMeta = TASK_TABS.find((t) => t.id === activeTask)!;
@@ -171,10 +252,10 @@ export default function TaskStudioView() {
     <div className="mx-auto max-w-7xl space-y-6 p-6 lg:p-8">
       <div className="border-b pb-5" style={{ borderColor: "var(--nawa-border)" }}>
         <h1 className="font-display text-2xl font-bold" style={{ textWrap: "balance" }}>
-          استوديو المهام المعزولة
+          استوديو المهام البرمجية
         </h1>
         <p className="mt-1.5 text-sm" style={{ color: "var(--nawa-muted)" }}>
-          كل مهمة برمجية معزولة في تبويبها المستقل وسياقها الخاص مع تنفيذ واختبار فعلي داخل بيئة العمل.
+          اختر المهمة المطلوبة لتوليد الكود واختباره عملياً في مساحة مستقلة.
         </p>
 
         <div className="mt-5 flex flex-wrap items-center gap-2 border-t pt-4" style={{ borderColor: "var(--nawa-border)" }}>
@@ -373,7 +454,7 @@ export default function TaskStudioView() {
                   onClick={() =>
                     executeIsolatedTask(
                       "algorithms",
-                      "اكتب نواة C++ سريعة بـ AVX2 تنجز 50 مليون عملية في الثانية",
+                      "اكتب دالة C++ سريعة لضرب المتجهات بتعليمات AVX2",
                       "generate_native_kernel"
                     )
                   }
@@ -385,7 +466,7 @@ export default function TaskStudioView() {
                   }}
                 >
                   <Cpu className="h-4 w-4" style={{ color: "var(--nawa-accent)" }} />
-                  <span>توليد نواة C++ AVX2</span>
+                  <span>توليد كود C++ AVX2</span>
                 </button>
               </div>
             )}
@@ -422,26 +503,31 @@ export default function TaskStudioView() {
               </div>
             )}
 
-            <form
-              className="space-y-2 border-t pt-4"
-              style={{ borderColor: "var(--nawa-border)" }}
-              onSubmit={(e) => {
-                e.preventDefault();
-                const text = customPrompts[activeTask].trim();
-                if (!text || currentState.busy) return;
-                executeIsolatedTask(activeTask, text, currentTabMeta.scope);
-              }}
-            >
-              <label className="block text-xs" style={{ color: "var(--nawa-muted)" }}>
-                أو اكتب أمراً مخصصاً داخل نطاق هذه المهمة:
-              </label>
-              <div className="flex gap-2">
+            {activeTask === "notes" && (
+              <form onSubmit={(e) => void handleSaveNote(e)} className="space-y-3">
+                {!user && (
+                  <p className="text-xs" style={{ color: "var(--nawa-muted)" }}>
+                    سجّل الدخول بحساب Google لحفظ ملاحظاتك ومزامنتها عبر جلساتك.
+                  </p>
+                )}
                 <input
                   type="text"
-                  value={customPrompts[activeTask]}
-                  onChange={(e) => setCustomPrompts((prev) => ({ ...prev, [activeTask]: e.target.value }))}
-                  placeholder="أمر باللهجة العربية..."
-                  className="flex-1 rounded-xl border px-3 py-2 text-xs focus:outline-none"
+                  value={noteTitle}
+                  onChange={(e) => setNoteTitle(e.target.value)}
+                  placeholder="عنوان الملاحظة..."
+                  className="h-10 w-full rounded-xl border px-3 text-xs focus:outline-none"
+                  style={{
+                    backgroundColor: "var(--nawa-elevated)",
+                    borderColor: "var(--nawa-border)",
+                    color: "var(--nawa-text)",
+                  }}
+                />
+                <textarea
+                  rows={4}
+                  value={noteContent}
+                  onChange={(e) => setNoteContent(e.target.value)}
+                  placeholder="اكتب الملاحظة أو خطة العمل أو مقتطف الكود..."
+                  className="w-full rounded-xl border p-3 text-xs focus:outline-none"
                   style={{
                     backgroundColor: "var(--nawa-elevated)",
                     borderColor: "var(--nawa-border)",
@@ -450,18 +536,58 @@ export default function TaskStudioView() {
                 />
                 <button
                   type="submit"
-                  disabled={currentState.busy || !customPrompts[activeTask].trim()}
-                  className="rounded-xl border px-3 py-2 text-xs font-medium disabled:opacity-40"
-                  style={{
-                    backgroundColor: "var(--nawa-elevated)",
-                    borderColor: "var(--nawa-border)",
-                    color: "var(--nawa-text)",
-                  }}
+                  disabled={noteBusy || !noteTitle.trim() || !noteContent.trim()}
+                  className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-xl px-4 text-xs font-semibold text-white disabled:opacity-50"
+                  style={{ backgroundColor: "var(--nawa-accent)" }}
                 >
-                  تنفيذ
+                  <Plus className="h-4 w-4" />
+                  <span>{user ? (noteBusy ? "جاري الحفظ..." : "حفظ الملاحظة") : "دخول Google للحفظ"}</span>
                 </button>
-              </div>
-            </form>
+              </form>
+            )}
+
+            {activeTask !== "notes" && (
+              <form
+                className="space-y-2 border-t pt-4"
+                style={{ borderColor: "var(--nawa-border)" }}
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const text = customPrompts[activeTask].trim();
+                  if (!text || currentState.busy) return;
+                  executeIsolatedTask(activeTask, text, currentTabMeta.scope);
+                }}
+              >
+                <label className="block text-xs" style={{ color: "var(--nawa-muted)" }}>
+                  أو اكتب أمراً مخصصاً داخل نطاق هذه المهمة:
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={customPrompts[activeTask]}
+                    onChange={(e) => setCustomPrompts((prev) => ({ ...prev, [activeTask]: e.target.value }))}
+                    placeholder="أمر باللهجة العربية..."
+                    className="flex-1 rounded-xl border px-3 py-2 text-xs focus:outline-none"
+                    style={{
+                      backgroundColor: "var(--nawa-elevated)",
+                      borderColor: "var(--nawa-border)",
+                      color: "var(--nawa-text)",
+                    }}
+                  />
+                  <button
+                    type="submit"
+                    disabled={currentState.busy || !customPrompts[activeTask].trim()}
+                    className="rounded-xl border px-3 py-2 text-xs font-medium disabled:opacity-40"
+                    style={{
+                      backgroundColor: "var(--nawa-elevated)",
+                      borderColor: "var(--nawa-border)",
+                      color: "var(--nawa-text)",
+                    }}
+                  >
+                    تنفيذ
+                  </button>
+                </div>
+              </form>
+            )}
           </div>
         </div>
 
@@ -478,7 +604,50 @@ export default function TaskStudioView() {
             </div>
           )}
 
-          {!currentState.reply && !currentState.busy ? (
+          {activeTask === "notes" ? (
+            <div className="space-y-3">
+              <div className="text-xs font-bold" style={{ color: "var(--nawa-muted)" }}>
+                ملاحظاتك المحفوظة ({notes.length})
+              </div>
+              {notes.length === 0 ? (
+                <div
+                  className="flex min-h-[260px] flex-col items-center justify-center text-center text-xs"
+                  style={{ color: "var(--nawa-muted)" }}
+                >
+                  <BookMarked className="mb-2.5 h-8 w-8 opacity-40" />
+                  <p>لا توجد ملاحظات محفوظة بعد.</p>
+                </div>
+              ) : (
+                <div className="space-y-2.5">
+                  {notes.map((n) => (
+                    <div
+                      key={n.id}
+                      className="rounded-xl border p-3.5 space-y-1.5"
+                      style={{
+                        backgroundColor: "var(--nawa-elevated)",
+                        borderColor: "var(--nawa-border)",
+                      }}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-bold">{n.title}</span>
+                        <button
+                          type="button"
+                          aria-label="حذف الملاحظة"
+                          onClick={() => void handleDeleteNote(n.id)}
+                          className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-red-500 hover:bg-red-500/10"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                      <p className="whitespace-pre-wrap text-xs leading-relaxed" style={{ color: "var(--nawa-muted)" }}>
+                        {n.content}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : !currentState.reply && !currentState.busy ? (
             <div
               className="flex h-full min-h-[320px] flex-col items-center justify-center text-center text-sm"
               style={{ color: "var(--nawa-muted)" }}
@@ -496,22 +665,16 @@ export default function TaskStudioView() {
             </div>
           ) : (
             <div className="space-y-4">
-              {currentState.inferenceMs !== null && (
+              {currentState.generatedFile && (
                 <div
                   className="flex flex-wrap items-center gap-2 border-b pb-2 text-xs"
                   style={{ borderColor: "var(--nawa-border)", color: "var(--nawa-muted)" }}
                 >
-                  <span>النطاق المعزول: {currentTabMeta.label}</span>
+                  <span>القسم: {currentTabMeta.label}</span>
                   <span aria-hidden="true">·</span>
-                  <span className="font-mono tabular-nums">WASM {currentState.inferenceMs} ms</span>
-                  {currentState.generatedFile && (
-                    <>
-                      <span aria-hidden="true">·</span>
-                      <span className="font-mono font-semibold" style={{ color: "var(--nawa-accent)" }} dir="ltr">
-                        {currentState.generatedFile}
-                      </span>
-                    </>
-                  )}
+                  <span className="font-mono font-semibold" style={{ color: "var(--nawa-accent)" }} dir="ltr">
+                    {currentState.generatedFile}
+                  </span>
                 </div>
               )}
 

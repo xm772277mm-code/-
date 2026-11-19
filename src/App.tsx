@@ -1,38 +1,37 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
+  AlertTriangle,
   Bot,
   Box,
   Cpu,
-  FolderKanban,
+  Gamepad2,
   Gauge,
   LogIn,
   LogOut,
+  MapPin,
   Menu,
   MessageSquarePlus,
-  Monitor,
-  Music,
-  Package,
   PanelLeftClose,
   PanelLeftOpen,
+  PhoneCall,
   SlidersHorizontal,
-  Smartphone,
+  Sparkles,
   Trash2,
 } from "lucide-react";
 import { ErrorBoundary } from "./components/ErrorBoundary.tsx";
 import { UiSettingsProvider, useUiSettings } from "./contexts/UiSettingsContext.tsx";
 import OfflineChatView, { NawaSparkMark } from "./components/OfflineChatView.tsx";
-import AgentWorkspaceView from "./components/AgentWorkspaceView.tsx";
-import TaskStudioView from "./components/TaskStudioView.tsx";
-import BenchmarkView from "./components/BenchmarkView.tsx";
-import ModelAndPackagingView from "./components/ModelAndPackagingView.tsx";
+import GoogleMapsView from "./components/GoogleMapsView.tsx";
+import MediaStudioView from "./components/MediaStudioView.tsx";
+import LiveVoiceView from "./components/LiveVoiceView.tsx";
+import GameStudioView from "./components/GameStudioView.tsx";
 import ThreeStudioView from "./components/ThreeStudioView.tsx";
-import LyriaMusicStudioView from "./components/LyriaMusicStudioView.tsx";
+import TaskStudioView from "./components/TaskStudioView.tsx";
+import ModelAndPackagingView from "./components/ModelAndPackagingView.tsx";
 import UiCustomizerModal from "./components/UiCustomizerModal.tsx";
-import AppOpenAdOverlay from "./components/AppOpenAdOverlay.tsx";
-import { useAppOpenAds } from "./hooks/useAppOpenAds.ts";
 import { deleteCloudChatThread } from "./firebase.ts";
 
-type ActiveTab = "chat" | "ide" | "tasks" | "benchmark" | "model" | "three" | "music";
+type ActiveTab = "chat" | "maps" | "media" | "voice" | "game" | "three" | "tasks" | "engine";
 
 interface LocalThread {
   id: string;
@@ -64,8 +63,6 @@ function GoogleGlyph() {
 
 function ClaudeWorkspaceShell() {
   const {
-    settings,
-    updateSettings,
     user,
     signingIn,
     authError,
@@ -78,29 +75,40 @@ function ClaudeWorkspaceShell() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
   const [customizerOpen, setCustomizerOpen] = useState(false);
-  const appOpenAds = useAppOpenAds();
+  const [mapsQuotaExceeded, setMapsQuotaExceeded] = useState(false);
 
   const [activeChatId, setActiveChatId] = useState<string>(() => "chat_" + Date.now());
   const [localThreads, setLocalThreads] = useState<LocalThread[]>(() => [
     { id: "chat_initial", title: "محادثة جديدة" },
   ]);
 
-  // Keep initial activeChatId synced with localThreads[0] on guest mode
-  const currentChatId = activeChatId === "chat_initial" ? localThreads[0]?.id || activeChatId : activeChatId;
+  useEffect(() => {
+    const onQuota = () => setMapsQuotaExceeded(true);
+    window.addEventListener("gmp-quota-exceeded", onQuota);
+    return () => window.removeEventListener("gmp-quota-exceeded", onQuota);
+  }, []);
+
+  const currentChatId =
+    activeChatId === "chat_initial" ? localThreads[0]?.id || activeChatId : activeChatId;
 
   const navItems: Array<{
     id: ActiveTab;
     label: string;
+    shortLabel: string;
     icon: React.ComponentType<{ className?: string; style?: React.CSSProperties }>;
   }> = [
-    { id: "chat", label: "المحادثة الذكية", icon: Bot },
-    { id: "three", label: "استوديو 3D (Three.js)", icon: Box },
-    { id: "music", label: "توليد الموسيقى (Lyria)", icon: Music },
-    { id: "ide", label: "بيئة التطوير (IDE)", icon: FolderKanban },
-    { id: "tasks", label: "استوديو المهام", icon: Cpu },
-    { id: "benchmark", label: "اختبار 50M/ث", icon: Gauge },
-    { id: "model", label: "النموذج والتصدير", icon: Package },
+    { id: "chat", label: "المحادثة الذكية", shortLabel: "المحادثة", icon: Bot },
+    { id: "maps", label: "خرائط Google والمسارات", shortLabel: "الخرائط", icon: MapPin },
+    { id: "media", label: "الصور والفيديو والموسيقى", shortLabel: "الوسائط", icon: Sparkles },
+    { id: "voice", label: "المحادثة الصوتية المباشرة", shortLabel: "الصوت المباشر", icon: PhoneCall },
+    { id: "game", label: "لعبة حارس النواة", shortLabel: "اللعبة", icon: Gamepad2 },
+    { id: "three", label: "استوديو التصميم ثلاثي الأبعاد", shortLabel: "استوديو 3D", icon: Box },
+    { id: "tasks", label: "المهام البرمجية والملاحظات", shortLabel: "المهام", icon: Cpu },
+    { id: "engine", label: "النموذج المخصص وتصدير EXE / APK", shortLabel: "النموذج والتصدير", icon: Gauge },
   ];
+
+  // Top Bar Contract: strictly 5 clean top navigation links
+  const headerNavIds: ActiveTab[] = ["chat", "maps", "media", "game", "three"];
 
   const startNewChat = () => {
     const newId = "chat_" + Date.now();
@@ -114,15 +122,15 @@ function ClaudeWorkspaceShell() {
     setLocalThreads((prev) => {
       const exists = prev.some((t) => t.id === currentChatId);
       if (!exists) return [{ id: currentChatId, title }, ...prev];
-      return prev.map((t) => (t.id === currentChatId && t.title === "محادثة جديدة" ? { ...t, title } : t));
+      return prev.map((t) =>
+        t.id === currentChatId && t.title === "محادثة جديدة" ? { ...t, title } : t
+      );
     });
   };
 
   const displayedThreads = user
     ? cloudChats.map((c) => ({ id: c.id, title: c.title }))
     : localThreads;
-
-  const isDesktopKB = settings.deviceProfile === "desktop-50b";
 
   const sidebarContent = (
     <div
@@ -133,12 +141,11 @@ function ClaudeWorkspaceShell() {
         color: "var(--nawa-text)",
       }}
     >
-      {/* Brand + Collapse */}
       <div className="flex h-14 items-center justify-between px-4">
         <button
           type="button"
           onClick={() => setActiveTab("chat")}
-          className="flex items-center gap-2.5 font-display text-lg font-bold tracking-tight whitespace-nowrap shrink-0"
+          className="flex min-h-[40px] items-center gap-2.5 font-display text-lg font-bold tracking-tight whitespace-nowrap shrink-0"
         >
           <NawaSparkMark size={20} />
           <span>نواة</span>
@@ -151,19 +158,18 @@ function ClaudeWorkspaceShell() {
             setMobileDrawerOpen(false);
           }}
           aria-label="طي الشريط الجانبي"
-          className="inline-flex h-8 w-8 items-center justify-center rounded-lg transition-colors hover:opacity-75"
+          className="inline-flex h-10 w-10 items-center justify-center rounded-lg transition-colors hover:opacity-75"
           style={{ color: "var(--nawa-muted)" }}
         >
           <PanelLeftClose className="h-4 w-4" />
         </button>
       </div>
 
-      {/* Primary New Chat CTA */}
       <div className="px-3 pb-3">
         <button
           type="button"
           onClick={startNewChat}
-          className="flex h-10 w-full items-center gap-2 rounded-xl border px-3 text-xs font-semibold transition-colors whitespace-nowrap"
+          className="flex h-10 w-full items-center gap-2 rounded-xl border px-3.5 text-xs font-semibold transition-colors whitespace-nowrap"
           style={{
             backgroundColor: "var(--nawa-surface)",
             borderColor: "var(--nawa-border)",
@@ -175,9 +181,8 @@ function ClaudeWorkspaceShell() {
         </button>
       </div>
 
-      {/* Workspace Navigation */}
       <div className="px-3 space-y-0.5">
-        <div className="px-2 pb-1 text-[11px] font-semibold" style={{ color: "var(--nawa-muted)" }}>
+        <div className="px-2 pb-1 text-xs font-semibold" style={{ color: "var(--nawa-muted)" }}>
           مساحة العمل
         </div>
         {navItems.map((item) => {
@@ -191,9 +196,9 @@ function ClaudeWorkspaceShell() {
                 setActiveTab(item.id);
                 setMobileDrawerOpen(false);
               }}
-              className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-xs font-medium transition-colors whitespace-nowrap"
+              className="flex min-h-[38px] w-full items-center gap-2.5 rounded-xl px-3 py-1.5 text-xs font-medium transition-colors whitespace-nowrap"
               style={{
-                backgroundColor: active ? "var(--nawa-elevated)" : "transparent",
+                backgroundColor: active ? "var(--nawa-surface)" : "transparent",
                 color: active ? "var(--nawa-text)" : "var(--nawa-muted)",
               }}
             >
@@ -207,9 +212,8 @@ function ClaudeWorkspaceShell() {
         })}
       </div>
 
-      {/* Recent Conversations */}
       <div className="mt-4 flex-1 overflow-y-auto px-3">
-        <div className="px-2 pb-1.5 text-[11px] font-semibold" style={{ color: "var(--nawa-muted)" }}>
+        <div className="px-2 pb-1.5 text-xs font-semibold" style={{ color: "var(--nawa-muted)" }}>
           {user ? "محادثاتك السحابية" : "الجلسات الأخيرة"}
         </div>
         <div className="space-y-0.5">
@@ -223,9 +227,9 @@ function ClaudeWorkspaceShell() {
               return (
                 <div
                   key={th.id}
-                  className="group flex items-center justify-between gap-1 rounded-xl px-2.5 py-2 text-xs transition-colors"
+                  className="group flex min-h-[38px] items-center justify-between gap-1 rounded-xl px-2.5 py-1.5 text-xs transition-colors"
                   style={{
-                    backgroundColor: isCurrent ? "var(--nawa-elevated)" : "transparent",
+                    backgroundColor: isCurrent ? "var(--nawa-surface)" : "transparent",
                     color: isCurrent ? "var(--nawa-text)" : "var(--nawa-muted)",
                   }}
                 >
@@ -245,7 +249,7 @@ function ClaudeWorkspaceShell() {
                       type="button"
                       aria-label="حذف المحادثة"
                       onClick={() => void deleteCloudChatThread(user.uid, th.id)}
-                      className="opacity-0 transition-opacity group-hover:opacity-100 hover:text-red-500"
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-lg opacity-0 transition-opacity group-hover:opacity-100 hover:text-red-500"
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>
@@ -257,120 +261,78 @@ function ClaudeWorkspaceShell() {
         </div>
       </div>
 
-      {/* Sidebar Bottom: KB Profile Toggle + UI Customizer + Google Auth */}
       <div
-        className="border-t p-3 space-y-2"
+        className="border-t p-3 space-y-1.5"
         style={{ borderColor: "var(--nawa-border)" }}
       >
-        {/* Quick Device KB Tier Switch */}
-        <button
-          type="button"
-          onClick={() =>
-            updateSettings({
-              deviceProfile: isDesktopKB ? "mobile-50m" : "desktop-50b",
-            })
-          }
-          className="flex w-full items-center justify-between rounded-xl border px-3 py-2 text-xs transition-colors"
-          style={{
-            backgroundColor: "var(--nawa-surface)",
-            borderColor: "var(--nawa-border)",
-          }}
-        >
-          <span className="flex items-center gap-2">
-            {isDesktopKB ? (
-              <Monitor className="h-3.5 w-3.5" style={{ color: "var(--nawa-accent)" }} />
-            ) : (
-              <Smartphone className="h-3.5 w-3.5" style={{ color: "var(--nawa-accent)" }} />
-            )}
-            <span className="font-medium">
-              {isDesktopKB ? "كمبيوتر · 50 مليار سؤال" : "هاتف · 50 مليون سؤال"}
-            </span>
-          </span>
-          <span className="text-[11px]" style={{ color: "var(--nawa-accent)" }}>
-            تبديل
-          </span>
-        </button>
-
-        {/* Customize UI Button */}
         <button
           type="button"
           onClick={() => setCustomizerOpen(true)}
-          className="flex w-full items-center gap-2 rounded-xl border px-3 py-2 text-xs font-medium transition-colors"
-          style={{
-            backgroundColor: "var(--nawa-surface)",
-            borderColor: "var(--nawa-border)",
-            color: "var(--nawa-text)",
-          }}
+          className="flex min-h-[40px] w-full items-center gap-2 rounded-xl px-2.5 py-2 text-xs font-medium transition-colors hover:opacity-85 whitespace-nowrap"
+          style={{ color: "var(--nawa-text)" }}
         >
-          <SlidersHorizontal className="h-3.5 w-3.5" style={{ color: "var(--nawa-accent)" }} />
-          <span>تخصيص واجهة المستخدم</span>
+          <SlidersHorizontal className="h-4 w-4 shrink-0" style={{ color: "var(--nawa-accent)" }} />
+          <span>تخصيص المظهر والخطوط</span>
         </button>
 
-        {/* Google Account Auth */}
-        {user ? (
-          <div
-            className="flex items-center justify-between gap-2 rounded-xl border px-3 py-2"
-            style={{
-              backgroundColor: "var(--nawa-surface)",
-              borderColor: "var(--nawa-border)",
-            }}
-          >
-            <div className="flex min-w-0 items-center gap-2">
-              {user.photoURL ? (
-                <img
-                  src={user.photoURL}
-                  alt={user.displayName || "صورة الحساب"}
-                  referrerPolicy="no-referrer"
-                  className="h-7 w-7 shrink-0 rounded-full object-cover"
-                />
-              ) : (
-                <div
-                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-bold text-white"
-                  style={{ backgroundColor: "var(--nawa-accent)" }}
-                >
-                  {(user.displayName || user.email || "N")[0]}
-                </div>
-              )}
-              <div className="min-w-0">
-                <div className="truncate text-xs font-semibold">
-                  {user.displayName || "مستخدم Google"}
-                </div>
-                <div className="truncate text-[11px]" style={{ color: "var(--nawa-muted)" }} dir="ltr">
-                  {user.email}
+        <div className="border-t pt-2" style={{ borderColor: "var(--nawa-border)" }}>
+          {user ? (
+            <div className="flex items-center justify-between gap-2 px-1 py-1">
+              <div className="flex min-w-0 items-center gap-2">
+                {user.photoURL ? (
+                  <img
+                    src={user.photoURL}
+                    alt={user.displayName || "صورة الحساب"}
+                    referrerPolicy="no-referrer"
+                    className="h-8 w-8 shrink-0 rounded-full object-cover"
+                  />
+                ) : (
+                  <div
+                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-bold text-white"
+                    style={{ backgroundColor: "var(--nawa-accent)" }}
+                  >
+                    {(user.displayName || user.email || "N")[0]}
+                  </div>
+                )}
+                <div className="min-w-0">
+                  <div className="truncate text-xs font-semibold">
+                    {user.displayName || "مستخدم Google"}
+                  </div>
+                  <div className="truncate text-[11px]" style={{ color: "var(--nawa-muted)" }} dir="ltr">
+                    {user.email}
+                  </div>
                 </div>
               </div>
+              <button
+                type="button"
+                onClick={() => void signOutUser()}
+                aria-label="تسجيل الخروج"
+                title="تسجيل الخروج"
+                className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg transition-colors hover:text-red-500"
+                style={{ color: "var(--nawa-muted)" }}
+              >
+                <LogOut className="h-4 w-4" />
+              </button>
             </div>
+          ) : (
             <button
               type="button"
-              onClick={() => void signOutUser()}
-              aria-label="تسجيل الخروج"
-              title="تسجيل الخروج"
-              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-colors hover:text-red-500"
-              style={{ color: "var(--nawa-muted)" }}
+              disabled={signingIn}
+              onClick={() => void signInWithGoogle()}
+              className="flex h-10 w-full items-center justify-center gap-2 rounded-xl border px-3 text-xs font-semibold transition-colors disabled:opacity-60 whitespace-nowrap"
+              style={{
+                backgroundColor: "var(--nawa-surface)",
+                borderColor: "var(--nawa-border)",
+                color: "var(--nawa-text)",
+              }}
             >
-              <LogOut className="h-4 w-4" />
+              <GoogleGlyph />
+              <span>{signingIn ? "جاري تسجيل الدخول..." : "دخول بحساب Google"}</span>
             </button>
-          </div>
-        ) : (
-          <button
-            type="button"
-            disabled={signingIn}
-            onClick={() => void signInWithGoogle()}
-            className="flex h-10 w-full items-center justify-center gap-2 rounded-xl border px-3 text-xs font-semibold transition-colors disabled:opacity-60"
-            style={{
-              backgroundColor: "var(--nawa-surface)",
-              borderColor: "var(--nawa-border)",
-              color: "var(--nawa-text)",
-            }}
-          >
-            <GoogleGlyph />
-            <span>{signingIn ? "جاري تسجيل الدخول..." : "تسجيل الدخول بحساب Google"}</span>
-          </button>
-        )}
+          )}
+        </div>
 
-        {authError && (
-          <div className="px-1 text-[11px] text-red-500">{authError}</div>
-        )}
+        {authError && <div className="px-1 text-xs text-red-600">{authError}</div>}
       </div>
     </div>
   );
@@ -383,10 +345,8 @@ function ClaudeWorkspaceShell() {
         color: "var(--nawa-text)",
       }}
     >
-      {/* Desktop Sidebar */}
       {sidebarOpen && <aside className="hidden h-full shrink-0 lg:block">{sidebarContent}</aside>}
 
-      {/* Mobile Slide-Over Drawer */}
       {mobileDrawerOpen && (
         <div
           className="fixed inset-0 z-40 flex bg-black/45 lg:hidden"
@@ -398,18 +358,15 @@ function ClaudeWorkspaceShell() {
         </div>
       )}
 
-      {/* Main Content Area */}
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        {/* Clean 3-Zone Top Header */}
         <header
-          className="flex h-14 shrink-0 items-center justify-between gap-4 border-b px-4 sm:px-6"
+          className="flex h-14 shrink-0 items-center justify-between gap-8 border-b px-4 sm:px-6"
           style={{
             backgroundColor: "var(--nawa-bg)",
             borderColor: "var(--nawa-border)",
           }}
         >
-          {/* Zone 1: Sidebar Trigger & Active Brand/View Title */}
-          <div className="flex items-center gap-2.5 min-w-0">
+          <div className="flex items-center gap-2 shrink-0">
             <button
               type="button"
               onClick={() => {
@@ -417,11 +374,8 @@ function ClaudeWorkspaceShell() {
                 else setSidebarOpen((v) => !v);
               }}
               aria-label="القائمة الجانبية"
-              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border transition-colors"
-              style={{
-                borderColor: "var(--nawa-border)",
-                color: "var(--nawa-text)",
-              }}
+              className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg transition-colors hover:opacity-75"
+              style={{ color: "var(--nawa-text)" }}
             >
               <span className="lg:hidden">
                 <Menu className="h-4 w-4" />
@@ -435,40 +389,60 @@ function ClaudeWorkspaceShell() {
               </span>
             </button>
 
-            <span className="font-display text-sm font-bold truncate whitespace-nowrap">
-              {navItems.find((n) => n.id === activeTab)?.label || "نواة"}
-            </span>
-          </div>
-
-          {/* Zone 2: Concise Cloud Engine & Hosting Indicator */}
-          <div className="hidden md:flex items-center gap-2 text-xs whitespace-nowrap" style={{ color: "var(--nawa-muted)" }}>
-            <span>Gemini 4 Hydrogen</span>
-            <span aria-hidden="true">·</span>
-            <span>متصل بالإنترنت (Google Cloud &amp; Firebase)</span>
-          </div>
-
-          {/* Zone 3: Single Primary Action (Customize or Google Sign-In) */}
-          <div className="flex items-center gap-2 shrink-0">
             <button
               type="button"
-              onClick={() => setCustomizerOpen(true)}
-              className="inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-xs font-medium transition-colors whitespace-nowrap shrink-0"
-              style={{
-                backgroundColor: "var(--nawa-surface)",
-                borderColor: "var(--nawa-border)",
-                color: "var(--nawa-text)",
-              }}
+              onClick={() => setActiveTab("chat")}
+              className="font-display text-base font-bold tracking-tight whitespace-nowrap shrink-0"
+              style={{ color: "var(--nawa-text)" }}
             >
-              <SlidersHorizontal className="h-3.5 w-3.5" style={{ color: "var(--nawa-accent)" }} />
-              <span className="hidden sm:inline">تخصيص الواجهة</span>
+              NawaCore
             </button>
+          </div>
 
-            {!user && (
+          <nav className="hidden md:flex items-center gap-6 overflow-x-auto" aria-label="التنقل الرئيسي">
+            {headerNavIds.map((tabId) => {
+              const item = navItems.find((n) => n.id === tabId)!;
+              const isActive = activeTab === tabId;
+              return (
+                <button
+                  key={tabId}
+                  type="button"
+                  onClick={() => setActiveTab(tabId)}
+                  className="relative py-2 text-xs font-medium transition-colors hover:opacity-100 whitespace-nowrap shrink-0"
+                  style={{
+                    color: isActive ? "var(--nawa-text)" : "var(--nawa-muted)",
+                    fontWeight: isActive ? 600 : 500,
+                  }}
+                >
+                  <span>{item.shortLabel}</span>
+                  {isActive && (
+                    <span
+                      className="absolute inset-x-0 -bottom-[9px] h-[2px]"
+                      style={{ backgroundColor: "var(--nawa-accent)" }}
+                    />
+                  )}
+                </button>
+              );
+            })}
+          </nav>
+
+          <div className="flex items-center shrink-0">
+            {user ? (
+              <button
+                type="button"
+                onClick={startNewChat}
+                className="inline-flex h-10 items-center gap-1.5 rounded-lg px-4 text-xs font-semibold text-white transition-opacity hover:opacity-90 whitespace-nowrap shrink-0"
+                style={{ backgroundColor: "var(--nawa-accent)" }}
+              >
+                <MessageSquarePlus className="h-3.5 w-3.5" />
+                <span>محادثة جديدة</span>
+              </button>
+            ) : (
               <button
                 type="button"
                 disabled={signingIn}
                 onClick={() => void signInWithGoogle()}
-                className="inline-flex h-9 items-center gap-1.5 rounded-lg px-3.5 text-xs font-semibold text-white transition-opacity whitespace-nowrap shrink-0 disabled:opacity-60"
+                className="inline-flex h-10 items-center gap-1.5 rounded-lg px-4 text-xs font-semibold text-white transition-opacity hover:opacity-90 whitespace-nowrap shrink-0 disabled:opacity-60"
                 style={{ backgroundColor: "var(--nawa-accent)" }}
               >
                 <LogIn className="h-3.5 w-3.5" />
@@ -478,35 +452,48 @@ function ClaudeWorkspaceShell() {
           </div>
         </header>
 
-        {/* Active Tab Viewport */}
+        {/* Case A: Google Maps Demo Key Quota Exceeded Banner */}
+        {mapsQuotaExceeded && (
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-amber-500/40 bg-amber-500/15 px-4 py-2 text-xs text-amber-800 dark:text-amber-200">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4 shrink-0 text-amber-500" />
+              <span>
+                The Google Maps API key is currently out of quota. Please try again later or add your own Maps API key.
+              </span>
+              <a
+                href="https://developers.google.com/maps/ai/ai-studio?utm_campaign=gmp_mcp_codeassist_v1_aistudio#quota_exceeded_errors"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-semibold underline"
+              >
+                Learn more
+              </a>
+            </div>
+            <button
+              type="button"
+              onClick={() => setMapsQuotaExceeded(false)}
+              className="rounded border border-amber-500/40 px-2 py-0.5 text-[11px] font-medium"
+            >
+              إغلاق
+            </button>
+          </div>
+        )}
+
         <main className="flex-1 overflow-y-auto">
           {activeTab === "chat" && (
             <OfflineChatView chatId={currentChatId} onTitleUpdate={handleThreadTitleUpdate} />
           )}
+          {activeTab === "maps" && <GoogleMapsView />}
+          {activeTab === "media" && <MediaStudioView />}
+          {activeTab === "voice" && <LiveVoiceView />}
+          {activeTab === "game" && <GameStudioView />}
           {activeTab === "three" && <ThreeStudioView />}
-          {activeTab === "music" && <LyriaMusicStudioView />}
-          {activeTab === "ide" && <AgentWorkspaceView />}
           {activeTab === "tasks" && <TaskStudioView />}
-          {activeTab === "benchmark" && <BenchmarkView />}
-          {activeTab === "model" && <ModelAndPackagingView />}
+          {activeTab === "engine" && <ModelAndPackagingView />}
         </main>
       </div>
 
-      <UiCustomizerModal
-        open={customizerOpen}
-        onClose={() => setCustomizerOpen(false)}
-        adConfig={appOpenAds.config}
-        onUpdateAdConfig={appOpenAds.updateConfig}
-        onPreviewAppOpenAd={appOpenAds.showPreviewAd}
-      />
-
-      <AppOpenAdOverlay
-        open={appOpenAds.visible}
-        creative={appOpenAds.creative}
-        adConfig={appOpenAds.config}
-        onDismiss={appOpenAds.dismissAd}
-        onAdClick={appOpenAds.recordClick}
-      />
+      <UiCustomizerModal open={customizerOpen} onClose={() => setCustomizerOpen(false)} />
     </div>
   );
 }

@@ -1,9 +1,12 @@
 import "dotenv/config";
 import fs from "node:fs";
+import http from "node:http";
 import path from "node:path";
 import os from "node:os";
 import { execSync } from "node:child_process";
 import express from "express";
+import { WebSocketServer, WebSocket } from "ws";
+import { GoogleGenAI, Modality } from "@google/genai";
 import {
   ensureWorkspaceSeeded,
   listFiles,
@@ -21,9 +24,28 @@ import {
   normalizeGeminiApiError,
   streamCloudGeminiReply,
   type CloudChatTurn,
+  type CloudGroundingMode,
+  type CloudModelId,
+  type CloudSystemRole,
   type CloudThinkingMode,
 } from "./src/server/cloudGeminiService.ts";
-import { GoogleGenAI } from "@google/genai";
+import {
+  checkUserCloudQuota,
+  getUserQuotaSnapshot,
+  recordUserCloudUsage,
+  verifyFirebaseBearerToken,
+} from "./src/server/firebaseAuthGuard.ts";
+import { adminAuth } from "./src/lib/firebase-admin.ts";
+import { requireAuth, type AuthenticatedRequest } from "./src/middleware/auth.ts";
+import {
+  createUserNote,
+  deleteUserNote,
+  listTopGameScores,
+  listUserMediaCreations,
+  listUserNotes,
+  recordGameScore,
+  recordMediaCreation,
+} from "./src/db/workspaceStore.ts";
 import {
   fineTuneNawaTransformer,
   getNawaTransformerLM,
@@ -67,16 +89,32 @@ function hasBinary(cmd: string): boolean {
   }
 }
 
+function createServerGeminiClient(timeoutMs = 60000): GoogleGenAI {
+  const apiKey = (process.env.GEMINI_API_KEY || "").trim();
+  if (!apiKey) {
+    throw Object.assign(
+      new Error("مفتاح GEMINI_API_KEY غير مضبوط في إعدادات الخادم (Settings > Secrets)."),
+      { statusCode: 503 }
+    );
+  }
+  return new GoogleGenAI({
+    apiKey,
+    httpOptions: {
+      timeout: timeoutMs,
+      retryOptions: { attempts: 1 },
+      headers: { "User-Agent": "aistudio-build" },
+    },
+  });
+}
+
 async function startServer() {
   ensureWorkspaceSeeded();
-  // Warm up Intent MLP, WASM kernel, and NawaLM Transformer checkpoint on boot
   const model = getNawaModel();
   await model.syncToWasm();
   const kernel = await getWasmKernel();
-  getNawaTransformerLM();
 
   const app = express();
-  app.use(express.json({ limit: "2mb" }));
+  app.use(express.json({ limit: "25mb" }));
 
   // Cloud Run / Firebase App Hosting health & readiness endpoint
   app.get("/api/health", (_req, res) => {
@@ -85,7 +123,12 @@ async function startServer() {
       service: "nawacore-studio",
       engineDefault: "cloud",
       cloudModel: "gemini-3.1-flash-lite",
+      cloudAuthRequired: true,
+      billingMode: "per_user_verified_quota",
       hasGeminiKey: Boolean((process.env.GEMINI_API_KEY || "").trim()),
+      hasMapsKey: Boolean(
+        (process.env.VITE_GOOGLE_MAPS_API_KEY || process.env.GOOGLE_MAPS_API_KEY || "").trim()
+      ),
       firebaseProjectId: "poised-subject-cfx4d",
       firestoreDatabaseId: "ai-studio-nawacorestudio-e14b41b7-0708-47e1-be76-958ba9b07dc2",
       region: process.env.CLOUD_RUN_REGION || "europe-west1",
@@ -94,12 +137,43 @@ async function startServer() {
     });
   });
 
-  // Workspace file listing
+  // Google Maps client key resolver (browser key restricted by HTTP referrer)
+  app.get("/api/maps/config", (_req, res) => {
+    const apiKey = (
+      process.env.VITE_GOOGLE_MAPS_API_KEY ||
+      process.env.GOOGLE_MAPS_API_KEY ||
+      ""
+    ).trim();
+    res.json({
+      configured: Boolean(apiKey),
+      apiKey,
+    });
+  });
+
+  // Verified Google user daily usage & billing attribution summary
+  app.get("/api/billing/account-usage", async (req, res) => {
+    const authResult = await verifyFirebaseBearerToken(req);
+    if (!authResult.ok) {
+      res.status(authResult.statusCode).json({
+        detail: authResult.message,
+        authRequired: authResult.statusCode === 401,
+      });
+      return;
+    }
+    const snapshot = getUserQuotaSnapshot(authResult.user.uid, authResult.user.email);
+    res.json({
+      billingMode: "per_user_verified_quota",
+      gcpBillingSource: "Settings > Secrets (GEMINI_API_KEY)",
+      user: authResult.user,
+      quota: snapshot,
+    });
+  });
+
+  // Workspace file listing & reader
   app.get("/api/files", (_req, res) => {
     res.json({ tree: listFiles(".") });
   });
 
-  // Workspace file reader
   app.get("/api/file", (req, res) => {
     const relPath = String(req.query.path || "");
     if (!relPath) {
@@ -118,7 +192,7 @@ async function startServer() {
     }
   });
 
-  // Standalone Offline Language Model (Decoupled from IDE Workspace)
+  // Session Management for Chatbot & Small Experimental Model
   const getOrCreateLlmSession = (
     sessionId: string,
     style: ResponseStyle,
@@ -204,6 +278,7 @@ async function startServer() {
     }
   });
 
+  // Cloud Gemini Chat + Grounding (Web Search / Google Maps) + Small Experimental Model Fallback
   app.post("/api/llm/chat", async (req, res) => {
     const message = String(req.body?.message || "").trim();
     const sessionId = String(req.body?.session_id || "default");
@@ -214,8 +289,20 @@ async function startServer() {
         ? req.body.thinkingMode
         : "auto"
     ) as CloudThinkingMode;
+    const modelId = req.body?.modelId as CloudModelId | undefined;
+    const systemRole = req.body?.systemRole as CloudSystemRole | undefined;
+    const groundingMode = req.body?.groundingMode as CloudGroundingMode | undefined;
     const searchGrounding =
-      typeof req.body?.searchGrounding === "boolean" ? req.body.searchGrounding : true;
+      typeof req.body?.searchGrounding === "boolean" ? req.body.searchGrounding : false;
+    const userLocation =
+      req.body?.userLocation &&
+      typeof req.body.userLocation.latitude === "number" &&
+      typeof req.body.userLocation.longitude === "number"
+        ? {
+            latitude: req.body.userLocation.latitude,
+            longitude: req.body.userLocation.longitude,
+          }
+        : null;
     const deviceProfile = req.body?.deviceProfile as DeviceKBProfile | undefined;
     const compressionEnabled =
       typeof req.body?.compressionEnabled === "boolean" ? req.body.compressionEnabled : undefined;
@@ -227,6 +314,7 @@ async function startServer() {
           (h) => h && (h.role === "user" || h.role === "assistant") && typeof h.content === "string"
         )
       : [];
+
     if (!message) {
       res.status(400).json({ detail: "الرسالة فارغة" });
       return;
@@ -236,6 +324,24 @@ async function startServer() {
     const llm = getNawaOfflineLLM();
 
     if (engineMode === "cloud") {
+      const authResult = await verifyFirebaseBearerToken(req);
+      if (!authResult.ok) {
+        res.status(authResult.statusCode).json({
+          detail: authResult.message,
+          authRequired: authResult.statusCode === 401,
+        });
+        return;
+      }
+
+      const quotaCheck = checkUserCloudQuota(authResult.user.uid, authResult.user.email);
+      if (!quotaCheck.allowed) {
+        res.status(quotaCheck.statusCode).json({
+          detail: quotaCheck.message,
+          accountBilling: quotaCheck.snapshot,
+        });
+        return;
+      }
+
       try {
         const mergedHistory: CloudChatTurn[] =
           ctx.history.length > 0
@@ -248,12 +354,21 @@ async function startServer() {
           compressedSummary: ctx.compressedSummary,
           style,
           thinkingMode,
+          modelId,
+          systemRole,
+          groundingMode,
           searchGrounding,
+          userLocation,
         });
 
         ctx.history.push({ role: "user", content: message, topicTag: "cloud-gemini" });
         ctx.history.push({ role: "assistant", content: cloudRes.reply, topicTag: "cloud-gemini" });
         const comp = llm.compressContextIfNeeded(ctx);
+        const accountBilling = recordUserCloudUsage(
+          authResult.user.uid,
+          authResult.user.email,
+          cloudRes.usageTokens
+        );
 
         res.json({
           reply: cloudRes.reply,
@@ -263,6 +378,7 @@ async function startServer() {
           groundingSources: cloudRes.groundingSources,
           usageTokens: cloudRes.usageTokens,
           latencyMs: cloudRes.latencyMs,
+          accountBilling,
           dialect: "سحابي متعدد اللغات",
           topic: "cloud-gemini",
           compressionStats: {
@@ -275,7 +391,7 @@ async function startServer() {
           suggestions: [
             "اشرحلي بمثال عملي أوضح",
             "لخصلي أهم النقاط في 5 سطور",
-            "إيه أحدث التطورات في الموضوع ده؟",
+            "ما الخطوات العملية التالية؟",
           ],
         });
       } catch (err) {
@@ -294,6 +410,7 @@ async function startServer() {
       res.json({
         ...result,
         engineMode: "offline",
+        modelName: "نموذج صغير (النسخة التجريبية)",
         compressedSummary: ctx.compressedSummary,
       });
     } catch (err) {
@@ -311,8 +428,20 @@ async function startServer() {
         ? req.body.thinkingMode
         : "auto"
     ) as CloudThinkingMode;
+    const modelId = req.body?.modelId as CloudModelId | undefined;
+    const systemRole = req.body?.systemRole as CloudSystemRole | undefined;
+    const groundingMode = req.body?.groundingMode as CloudGroundingMode | undefined;
     const searchGrounding =
-      typeof req.body?.searchGrounding === "boolean" ? req.body.searchGrounding : true;
+      typeof req.body?.searchGrounding === "boolean" ? req.body.searchGrounding : false;
+    const userLocation =
+      req.body?.userLocation &&
+      typeof req.body.userLocation.latitude === "number" &&
+      typeof req.body.userLocation.longitude === "number"
+        ? {
+            latitude: req.body.userLocation.latitude,
+            longitude: req.body.userLocation.longitude,
+          }
+        : null;
     const deviceProfile = req.body?.deviceProfile as DeviceKBProfile | undefined;
     const compressionEnabled =
       typeof req.body?.compressionEnabled === "boolean" ? req.body.compressionEnabled : undefined;
@@ -324,9 +453,31 @@ async function startServer() {
           (h) => h && (h.role === "user" || h.role === "assistant") && typeof h.content === "string"
         )
       : [];
+
     if (!message) {
       res.status(400).json({ detail: "الرسالة فارغة" });
       return;
+    }
+
+    let verifiedUser: { uid: string; email: string } | null = null;
+    if (engineMode === "cloud") {
+      const authResult = await verifyFirebaseBearerToken(req);
+      if (!authResult.ok) {
+        res.status(authResult.statusCode).json({
+          detail: authResult.message,
+          authRequired: authResult.statusCode === 401,
+        });
+        return;
+      }
+      const quotaCheck = checkUserCloudQuota(authResult.user.uid, authResult.user.email);
+      if (!quotaCheck.allowed) {
+        res.status(quotaCheck.statusCode).json({
+          detail: quotaCheck.message,
+          accountBilling: quotaCheck.snapshot,
+        });
+        return;
+      }
+      verifiedUser = { uid: authResult.user.uid, email: authResult.user.email };
     }
 
     res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
@@ -343,7 +494,7 @@ async function startServer() {
     const ctx = getOrCreateLlmSession(sessionId, style, compressionEnabled, deviceProfile);
     const llm = getNawaOfflineLLM();
 
-    if (engineMode === "cloud") {
+    if (engineMode === "cloud" && verifiedUser) {
       try {
         const mergedHistory: CloudChatTurn[] =
           ctx.history.length > 0
@@ -355,10 +506,11 @@ async function startServer() {
           `data: ${JSON.stringify({
             type: "meta",
             engineMode: "cloud",
-            modelName: "gemini-3.1-flash-lite",
+            modelName:
+              groundingMode === "maps" ? "gemini-4-hydrogen" : modelId || "gemini-3.1-flash-lite",
             dialect: "سحابي شامل",
             topic: "cloud-gemini",
-            searchGrounding,
+            groundingMode: groundingMode || (searchGrounding ? "search" : "none"),
             thinkingMode,
             compressedSummary: ctx.compressedSummary,
           })}\n\n`
@@ -371,7 +523,11 @@ async function startServer() {
             compressedSummary: ctx.compressedSummary,
             style,
             thinkingMode,
+            modelId,
+            systemRole,
+            groundingMode,
             searchGrounding,
+            userLocation,
           },
           (chunkText) => {
             if (closed) return;
@@ -383,6 +539,11 @@ async function startServer() {
         ctx.history.push({ role: "user", content: message, topicTag: "cloud-gemini" });
         ctx.history.push({ role: "assistant", content: cloudRes.reply, topicTag: "cloud-gemini" });
         const comp = llm.compressContextIfNeeded(ctx);
+        const accountBilling = recordUserCloudUsage(
+          verifiedUser.uid,
+          verifiedUser.email,
+          cloudRes.usageTokens
+        );
 
         res.write(
           `data: ${JSON.stringify({
@@ -393,6 +554,7 @@ async function startServer() {
             groundingSources: cloudRes.groundingSources,
             usageTokens: cloudRes.usageTokens,
             latencyMs: cloudRes.latencyMs,
+            accountBilling,
             compressionStats: {
               enabled: ctx.compressionEnabled,
               activeTurnsInWindow: ctx.history.length,
@@ -403,7 +565,7 @@ async function startServer() {
             suggestions: [
               "اشرحلي بمثال عملي أوضح",
               "لخصلي أهم النقاط في 5 سطور",
-              "تعمّق أكثر في التفاصيل التقنية",
+              "تعمّق أكثر في التفاصيل العملية",
             ],
           })}\n\n`
         );
@@ -436,6 +598,7 @@ async function startServer() {
         `data: ${JSON.stringify({
           type: "meta",
           engineMode: "offline",
+          modelName: "نموذج صغير (النسخة التجريبية)",
           topic: result.topic,
           dialect: result.dialect,
           intentCategory: result.intentCategory,
@@ -464,6 +627,7 @@ async function startServer() {
         `data: ${JSON.stringify({
           type: "done",
           engineMode: "offline",
+          modelName: "نموذج صغير (النسخة التجريبية)",
           suggestions: result.suggestions,
           compressionStats: result.compressionStats,
           compressedSummary: ctx.compressedSummary,
@@ -483,14 +647,13 @@ async function startServer() {
     }
   });
 
-  // Reset IDE agent session
+  // Task Studio endpoints
   app.post("/api/reset", (req, res) => {
     const sessionId = String(req.body?.session_id || "default");
     SESSIONS.delete(sessionId);
     res.json({ status: "ok" });
   });
 
-  // Custom Local Neural Agent Chat (with persistent context memory + optional taskScope)
   app.post("/api/chat", async (req, res) => {
     const message = String(req.body?.message || "").trim();
     const sessionId = String(req.body?.session_id || "default");
@@ -528,29 +691,20 @@ async function startServer() {
     }
   });
 
-  // Custom Model Inspection
+  // Legacy model endpoints (preserved for API compatibility)
   app.get("/api/model/info", (_req, res) => {
     res.json({
-      name: "NawaCore-50M",
+      name: "NawaCore-Small-Exp",
       architecture: `${INPUT_DIM} -> ${HIDDEN1_DIM} -> ${HIDDEN2_DIM} -> ${OUTPUT_DIM}`,
-      layers: [
-        { name: "Input (Dialect + Trigram Hash)", dim: INPUT_DIM, params: 0 },
-        { name: "Dense + ReLU (WASM 4x Unrolled)", dim: HIDDEN1_DIM, params: INPUT_DIM * HIDDEN1_DIM + HIDDEN1_DIM },
-        { name: "Dense + ReLU (WASM 4x Unrolled)", dim: HIDDEN2_DIM, params: HIDDEN1_DIM * HIDDEN2_DIM + HIDDEN2_DIM },
-        { name: "Output + Softmax", dim: OUTPUT_DIM, params: HIDDEN2_DIM * OUTPUT_DIM + OUTPUT_DIM },
-      ],
       totalParams: model.totalParams,
       weightsSizeBytes: model.totalParams * 4 + 20,
       wasmSizeBytes: kernel.wasmBytes.byteLength,
       trainedEpochs: model.trainedEpochs,
       corpusCount: model.corpus.length,
       intents: INTENTS,
-      lossHistory: model.lossHistory,
-      sampleCorpus: model.corpus.slice(-18).reverse(),
     });
   });
 
-  // Interactive Live Fine-Tuning
   app.post("/api/model/train", async (req, res) => {
     const text = String(req.body?.text || "").trim();
     const intent = String(req.body?.intent || "") as AgentIntentId;
@@ -566,11 +720,9 @@ async function startServer() {
       trainedEpochs: model.trainedEpochs,
       corpusCount: model.corpus.length,
       recentStats: recent,
-      lossHistory: model.lossHistory,
     });
   });
 
-  // Real Server-Side WASM 50M+ ops/sec Benchmark
   app.post("/api/benchmark", (req, res) => {
     const requestedOps = Number(req.body?.targetOps || 50_000_000);
     const clampedOps = Math.min(Math.max(requestedOps, 10_000_000), 500_000_000);
@@ -578,12 +730,9 @@ async function startServer() {
     res.json({
       ...result,
       runtime: `Node.js ${process.version} (${os.arch()}/${os.platform()})`,
-      cpuModel: os.cpus()[0]?.model || "x86_64",
-      cpuCores: os.cpus().length,
     });
   });
 
-  // Packaging Toolchain Probe
   app.get("/api/packaging/toolchain", (_req, res) => {
     res.json({
       host: `${os.platform()} ${os.arch()} (${os.cpus().length} cores)`,
@@ -595,34 +744,9 @@ async function startServer() {
         gradleAndroid: hasBinary("gradle"),
         python3: hasBinary("python3"),
       },
-      artifacts: [
-        {
-          id: "wasm",
-          filename: "nawa_engine.wasm",
-          sizeBytes: kernel.wasmBytes.byteLength,
-          ready: true,
-        },
-        {
-          id: "weights",
-          filename: "nawa_weights.bin",
-          sizeBytes: model.exportWeightsBinary().byteLength,
-          ready: true,
-        },
-        {
-          id: "exe-kit",
-          filename: "NawaCore-Windows-EXE-Kit.zip",
-          ready: true,
-        },
-        {
-          id: "apk-kit",
-          filename: "NawaCore-Android-APK-Kit.zip",
-          ready: true,
-        },
-      ],
     });
   });
 
-  // Preview generated native C++/JNI/Header source
   app.get("/api/packaging/preview", (req, res) => {
     const target = String(req.query.target || "windows");
     if (target === "windows") {
@@ -630,11 +754,10 @@ async function startServer() {
     } else if (target === "android") {
       res.json({ filename: "app/src/main/cpp/nawa_neon_jni.cpp", language: "cpp", code: generateAndroidNeonCpp() });
     } else {
-      res.json({ filename: "src/nawa_weights.h", language: "cpp", code: generateWeightsHeader().slice(0, 6000) + "\n// ... (truncated preview, full weights included in download)" });
+      res.json({ filename: "src/nawa_weights.h", language: "cpp", code: generateWeightsHeader().slice(0, 6000) });
     }
   });
 
-  // Download Real Artifacts (.wasm, .bin, .zip EXE kit, .zip APK kit)
   app.get("/api/packaging/download/:target", (req, res) => {
     const target = req.params.target;
     if (target === "wasm") {
@@ -667,26 +790,44 @@ async function startServer() {
       res.send(zipBuf);
       return;
     }
-    const rootFiles: Record<string, { filename: string; mime: string }> = {
-      deb: { filename: "nawacore-studio_2.0.0_amd64.deb", mime: "application/vnd.debian.binary-package" },
-      run: { filename: "NawaCore-Setup.run", mime: "application/x-shellscript" },
-      pyz: { filename: "NawaCore-Agent.pyz", mime: "application/octet-stream" },
-      "llm-weights": { filename: "nawa_llm.bin", mime: "application/octet-stream" },
+    const staticArtifacts: Record<string, { file: string; mime: string }> = {
+      deb: { file: "nawacore-studio_2.0.0_amd64.deb", mime: "application/vnd.debian.binary-package" },
+      run: { file: "NawaCore-Setup.run", mime: "application/x-shellscript" },
+      pyz: { file: "NawaCore-Agent.pyz", mime: "application/octet-stream" },
+      "llm-weights": { file: "nawa_llm.bin", mime: "application/octet-stream" },
     };
-    if (rootFiles[target]) {
-      const filePath = path.resolve(process.cwd(), rootFiles[target].filename);
-      if (fs.existsSync(filePath)) {
-        res.setHeader("Content-Type", rootFiles[target].mime);
-        res.setHeader("Content-Disposition", `attachment; filename="${rootFiles[target].filename}"`);
-        res.sendFile(filePath);
+    const matchedArtifact = staticArtifacts[target];
+    if (matchedArtifact) {
+      const fullPath = path.resolve(process.cwd(), matchedArtifact.file);
+      if (fs.existsSync(fullPath)) {
+        res.setHeader("Content-Type", matchedArtifact.mime);
+        res.setHeader("Content-Disposition", `attachment; filename="${matchedArtifact.file}"`);
+        res.sendFile(fullPath);
         return;
       }
     }
     res.status(404).json({ detail: "الحزمة المطلوبة غير موجودة" });
   });
 
-  // Lyria Music Generation (lyria-3-clip-preview / lyria-3-pro-preview)
+  // Feature 6: Real Lyria Music Streaming Generation (lyria-3-clip-preview / lyria-3-pro-preview)
   app.post("/api/ai/music", async (req, res) => {
+    const authResult = await verifyFirebaseBearerToken(req);
+    if (!authResult.ok) {
+      res.status(authResult.statusCode).json({
+        detail: authResult.message,
+        authRequired: authResult.statusCode === 401,
+      });
+      return;
+    }
+    const quotaCheck = checkUserCloudQuota(authResult.user.uid, authResult.user.email);
+    if (!quotaCheck.allowed) {
+      res.status(quotaCheck.statusCode).json({
+        detail: quotaCheck.message,
+        accountBilling: quotaCheck.snapshot,
+      });
+      return;
+    }
+
     const prompt = String(req.body?.prompt || "").trim();
     const duration = String(req.body?.duration || "clip");
     if (!prompt) {
@@ -694,18 +835,58 @@ async function startServer() {
       return;
     }
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-      const model = duration === "full" ? "lyria-3-pro-preview" : "lyria-3-clip-preview";
-      const response = await ai.models.generateContent({
-        model,
+      const ai = createServerGeminiClient(120000);
+      const modelName = duration === "full" ? "lyria-3-pro-preview" : "lyria-3-clip-preview";
+      const stream = await ai.models.generateContentStream({
+        model: modelName,
         contents: prompt,
       });
+
+      const audioChunks: Buffer[] = [];
+      let audioMimeType = "audio/mpeg";
+      let lyricsText = "";
+      let usageTokens = 0;
+
+      for await (const chunk of stream) {
+        const parts = chunk.candidates?.[0]?.content?.parts;
+        if (Array.isArray(parts)) {
+          for (const part of parts) {
+            if (part.text) {
+              lyricsText += part.text;
+            }
+            if (part.inlineData?.data) {
+              audioChunks.push(Buffer.from(part.inlineData.data, "base64"));
+              if (part.inlineData.mimeType) {
+                audioMimeType = part.inlineData.mimeType;
+              }
+            }
+          }
+        }
+        if (chunk.usageMetadata?.totalTokenCount) {
+          usageTokens = chunk.usageMetadata.totalTokenCount;
+        }
+      }
+
+      const audioDataUrl =
+        audioChunks.length > 0
+          ? `data:${audioMimeType};base64,${Buffer.concat(audioChunks).toString("base64")}`
+          : null;
+
+      const finalTokens = usageTokens || 500;
+      const accountBilling = recordUserCloudUsage(
+        authResult.user.uid,
+        authResult.user.email,
+        finalTokens
+      );
+
       res.json({
         ok: true,
-        model,
+        model: modelName,
         prompt,
-        audioUri: response.candidates?.[0]?.content?.parts?.[0]?.fileData?.fileUri || null,
-        text: response.text || "تم توليد المقطع الموسيقي بنجاح.",
+        audioUri: audioDataUrl,
+        text: lyricsText.trim() || "تم توليد المقطع الموسيقي بنجاح.",
+        usageTokens: finalTokens,
+        accountBilling,
       });
     } catch (err) {
       const mapped = normalizeGeminiApiError(err);
@@ -713,24 +894,83 @@ async function startServer() {
     }
   });
 
-  // Image Generation (gemini-nano-banana-2.1)
+  // Feature 10: Image Generation & Image Editing (gemini-nano-banana-2.1)
   app.post("/api/ai/image", async (req, res) => {
-    const prompt = String(req.body?.prompt || "").trim();
-    if (!prompt) {
-      res.status(400).json({ detail: "يرجى إدخال وصف الصورة" });
+    const authResult = await verifyFirebaseBearerToken(req);
+    if (!authResult.ok) {
+      res.status(authResult.statusCode).json({
+        detail: authResult.message,
+        authRequired: authResult.statusCode === 401,
+      });
       return;
     }
+    const quotaCheck = checkUserCloudQuota(authResult.user.uid, authResult.user.email);
+    if (!quotaCheck.allowed) {
+      res.status(quotaCheck.statusCode).json({
+        detail: quotaCheck.message,
+        accountBilling: quotaCheck.snapshot,
+      });
+      return;
+    }
+
+    const prompt = String(req.body?.prompt || "").trim();
+    const inputImageBase64 = typeof req.body?.inputImageBase64 === "string" ? req.body.inputImageBase64.trim() : "";
+    const inputImageMimeType = typeof req.body?.inputImageMimeType === "string" ? req.body.inputImageMimeType.trim() : "image/png";
+    const aspectRatio = typeof req.body?.aspectRatio === "string" ? req.body.aspectRatio.trim() : "1:1";
+    const imageSize = typeof req.body?.imageSize === "string" ? req.body.imageSize.trim() : "1K";
+
+    if (!prompt) {
+      res.status(400).json({ detail: "يرجى إدخال وصف الصورة أو التعديل المطلوب" });
+      return;
+    }
+
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      const ai = createServerGeminiClient(90000);
+      const contents = inputImageBase64
+        ? [
+            { inlineData: { mimeType: inputImageMimeType, data: inputImageBase64 } },
+            prompt,
+          ]
+        : prompt;
+
       const response = await ai.models.generateContent({
         model: "gemini-nano-banana-2.1",
-        contents: prompt,
+        contents,
+        config: {
+          responseModalities: ["IMAGE", "TEXT"],
+          imageConfig: {
+            aspectRatio,
+            imageSize,
+          },
+        },
       });
+
+      const parts = response.candidates?.[0]?.content?.parts || [];
+      const inlinePart = parts.find((p) => p.inlineData?.data && p.inlineData?.mimeType)?.inlineData;
+      const imageDataUrl = inlinePart
+        ? `data:${inlinePart.mimeType};base64,${inlinePart.data}`
+        : null;
+      const caption = parts
+        .filter((p) => typeof p.text === "string")
+        .map((p) => p.text)
+        .join("\n")
+        .trim();
+
+      const usageTokens = response.usageMetadata?.totalTokenCount || 500;
+      const accountBilling = recordUserCloudUsage(
+        authResult.user.uid,
+        authResult.user.email,
+        usageTokens
+      );
+
       res.json({
         ok: true,
         model: "gemini-nano-banana-2.1",
         prompt,
-        text: response.text || "تم توليد الصورة بنجاح.",
+        imageDataUrl,
+        text: caption || "تم إنشاء الصورة بنجاح.",
+        usageTokens,
+        accountBilling,
       });
     } catch (err) {
       const mapped = normalizeGeminiApiError(err);
@@ -738,8 +978,118 @@ async function startServer() {
     }
   });
 
-  // Audio Transcription (gemini-3.5-transcribe)
+  // Features 11 & 12: Video Generation & Image-to-Video Animation (gemini-omni-1.2-flash via Interactions API)
+  app.post("/api/ai/video", async (req, res) => {
+    const authResult = await verifyFirebaseBearerToken(req);
+    if (!authResult.ok) {
+      res.status(authResult.statusCode).json({
+        detail: authResult.message,
+        authRequired: authResult.statusCode === 401,
+      });
+      return;
+    }
+    const quotaCheck = checkUserCloudQuota(authResult.user.uid, authResult.user.email);
+    if (!quotaCheck.allowed) {
+      res.status(quotaCheck.statusCode).json({
+        detail: quotaCheck.message,
+        accountBilling: quotaCheck.snapshot,
+      });
+      return;
+    }
+
+    const prompt = String(req.body?.prompt || "").trim();
+    const inputImageBase64 = typeof req.body?.inputImageBase64 === "string" ? req.body.inputImageBase64.trim() : "";
+    const inputImageMimeType = typeof req.body?.inputImageMimeType === "string" ? req.body.inputImageMimeType.trim() : "image/png";
+    const aspectRatio = req.body?.aspectRatio === "9:16" ? "9:16" : "16:9";
+    const duration = req.body?.duration === "10s" ? "10s" : "5s";
+
+    if (!prompt) {
+      res.status(400).json({ detail: "يرجى إدخال وصف الفيديو أو الحركة المطلوبة" });
+      return;
+    }
+
+    try {
+      const ai = createServerGeminiClient(300000);
+      const interactionInput = inputImageBase64
+        ? [
+            {
+              type: "image" as const,
+              data: inputImageBase64,
+              mime_type: inputImageMimeType as "image/png" | "image/jpeg" | "image/webp",
+            },
+            {
+              type: "text" as const,
+              text: prompt,
+            },
+          ]
+        : prompt;
+
+      const interaction = await ai.interactions.create(
+        {
+          model: "gemini-omni-1.2-flash",
+          input: interactionInput,
+          response_format: {
+            type: "video",
+            aspect_ratio: aspectRatio,
+            duration,
+            resolution: "720p",
+          },
+        },
+        { timeout: 300000 }
+      );
+
+      const outVideo = interaction.output_video as
+        | { data?: string; mime_type?: string; uri?: string }
+        | undefined;
+      const videoDataUrl = outVideo?.data
+        ? `data:${outVideo.mime_type || "video/mp4"};base64,${outVideo.data}`
+        : outVideo?.uri || null;
+
+      if (!videoDataUrl) {
+        throw new Error("لم يتم استلام ملف الفيديو من خادم التوليد.");
+      }
+
+      const usageTokens = interaction.usage?.total_tokens || 1200;
+      const accountBilling = recordUserCloudUsage(
+        authResult.user.uid,
+        authResult.user.email,
+        usageTokens
+      );
+
+      res.json({
+        ok: true,
+        model: "gemini-omni-1.2-flash",
+        prompt,
+        videoDataUrl,
+        text: interaction.output_text || "تم توليد الفيديو بنجاح.",
+        usageTokens,
+        accountBilling,
+      });
+    } catch (err) {
+      const mapped = normalizeGeminiApiError(err);
+      res.status(mapped.statusCode).json({ detail: mapped.message });
+    }
+  });
+
+  // Feature 14: Audio Transcription (gemini-3.5-transcribe)
   app.post("/api/ai/transcribe", async (req, res) => {
+    const authResult = await verifyFirebaseBearerToken(req);
+    if (!authResult.ok) {
+      res.status(authResult.statusCode).json({
+        detail: authResult.message,
+        authRequired: authResult.statusCode === 401,
+      });
+      return;
+    }
+    const quotaCheck = checkUserCloudQuota(authResult.user.uid, authResult.user.email);
+    if (!quotaCheck.allowed) {
+      res.status(quotaCheck.statusCode).json({
+        detail: quotaCheck.message,
+        accountBilling: quotaCheck.snapshot,
+      });
+      return;
+    }
+
     const audioBase64 = String(req.body?.audioBase64 || "").trim();
     const mimeType = String(req.body?.mimeType || "audio/webm");
     if (!audioBase64) {
@@ -747,23 +1097,134 @@ async function startServer() {
       return;
     }
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      const ai = createServerGeminiClient(45000);
       const response = await ai.models.generateContent({
         model: "gemini-3.5-transcribe",
         contents: {
           parts: [
             { inlineData: { mimeType, data: audioBase64 } },
-            { text: "قم بتفريغ النص الصوتي التالي بدقة باللغة العربية أو الإنجليزية." },
+            { text: "قم بتفريغ النص الصوتي التالي بدقة باللغة العربية أو الإنجليزية دون إضافات." },
           ],
         },
       });
+      const usageTokens = response.usageMetadata?.totalTokenCount || 200;
+      const accountBilling = recordUserCloudUsage(
+        authResult.user.uid,
+        authResult.user.email,
+        usageTokens
+      );
       res.json({
         ok: true,
         transcript: response.text || "لم يتم اكتشاف صوت واضح.",
+        usageTokens,
+        accountBilling,
       });
     } catch (err) {
       const mapped = normalizeGeminiApiError(err);
       res.status(mapped.statusCode).json({ detail: mapped.message });
+    }
+  });
+
+  // Feature 7: Cloud SQL PostgreSQL Routes (Notes, Game Leaderboard, Saved Media History)
+  app.get("/api/sql/notes", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const notes = await listUserNotes(req.user!);
+      res.json({ notes });
+    } catch (err) {
+      console.error("SQL notes read error:", err);
+      res.status(500).json({ detail: "تعذر تحميل الملاحظات المحفوظة حالياً." });
+    }
+  });
+
+  app.post("/api/sql/notes", requireAuth, async (req: AuthenticatedRequest, res) => {
+    const title = String(req.body?.title || "").trim();
+    const content = String(req.body?.content || "").trim();
+    const category = String(req.body?.category || "general").trim();
+    if (!title || !content) {
+      res.status(400).json({ detail: "يرجى كتابة عنوان ومحتوى الملاحظة." });
+      return;
+    }
+    try {
+      const note = await createUserNote(req.user!, title, content, category);
+      res.status(201).json({ note });
+    } catch (err) {
+      console.error("SQL notes write error:", err);
+      res.status(500).json({ detail: "تعذر حفظ الملاحظة حالياً." });
+    }
+  });
+
+  app.delete("/api/sql/notes/:id", requireAuth, async (req: AuthenticatedRequest, res) => {
+    const noteId = Number(req.params.id);
+    if (!Number.isInteger(noteId) || noteId <= 0) {
+      res.status(400).json({ detail: "معرف الملاحظة غير صالح." });
+      return;
+    }
+    try {
+      const removed = await deleteUserNote(req.user!, noteId);
+      if (!removed) {
+        res.status(404).json({ detail: "الملاحظة غير موجودة أو غير مصرح بحذفها." });
+        return;
+      }
+      res.json({ ok: true });
+    } catch (err) {
+      console.error("SQL notes delete error:", err);
+      res.status(500).json({ detail: "تعذر حذف الملاحظة." });
+    }
+  });
+
+  app.get("/api/sql/scores", async (_req, res) => {
+    try {
+      const scores = await listTopGameScores();
+      res.json({ scores });
+    } catch (err) {
+      console.error("SQL scores read error:", err);
+      res.status(500).json({ detail: "تعذر تحميل لوحة النتائج." });
+    }
+  });
+
+  app.post("/api/sql/scores", requireAuth, async (req: AuthenticatedRequest, res) => {
+    const score = Number(req.body?.score);
+    const wave = Number(req.body?.wave || 1);
+    const outcome = String(req.body?.outcome || "completed");
+    if (!Number.isFinite(score) || score < 0) {
+      res.status(400).json({ detail: "قيمة النقاط غير صالحة." });
+      return;
+    }
+    try {
+      const saved = await recordGameScore(req.user!, score, wave, outcome);
+      const scores = await listTopGameScores();
+      res.status(201).json({ saved, scores });
+    } catch (err) {
+      console.error("SQL score save error:", err);
+      res.status(500).json({ detail: "تعذر حفظ النتيجة." });
+    }
+  });
+
+  app.get("/api/sql/creations", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const items = await listUserMediaCreations(req.user!);
+      res.json({ items });
+    } catch (err) {
+      console.error("SQL creations read error:", err);
+      res.status(500).json({ detail: "تعذر تحميل سجل الإبداعات." });
+    }
+  });
+
+  app.post("/api/sql/creations", requireAuth, async (req: AuthenticatedRequest, res) => {
+    const mediaType = String(req.body?.mediaType || "image").trim();
+    const modelName = String(req.body?.modelName || "").trim();
+    const prompt = String(req.body?.prompt || "").trim();
+    const summaryText = typeof req.body?.summaryText === "string" ? req.body.summaryText : null;
+    if (!prompt || !modelName) {
+      res.status(400).json({ detail: "بيانات السجل ناقصة." });
+      return;
+    }
+    try {
+      const item = await recordMediaCreation(req.user!, mediaType, modelName, prompt, summaryText);
+      res.status(201).json({ item });
+    } catch (err) {
+      console.error("SQL creation save error:", err);
+      res.status(500).json({ detail: "تعذر حفظ السجل." });
     }
   });
 
@@ -782,8 +1243,149 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
+  const httpServer = http.createServer(app);
+
+  // Feature 9: Real-time Voice Conversations via Gemini Live API (gemini-3.8-live)
+  const wss = new WebSocketServer({ server: httpServer, path: "/live" });
+  wss.on("connection", async (ws, req) => {
+    let liveSession: Awaited<ReturnType<GoogleGenAI["live"]["connect"]>> | null = null;
+    let verifiedEmail = "";
+    let verifiedUid = "";
+
+    const safeSend = (payload: Record<string, unknown>) => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify(payload));
+      }
+    };
+
+    try {
+      const url = new URL(req.url || "/live", `http://${req.headers.host || "localhost"}`);
+      const token = (url.searchParams.get("token") || "").trim();
+      const voiceName = (url.searchParams.get("voice") || "Aoede").trim();
+      if (!token) {
+        safeSend({ type: "error", detail: "يلزم تسجيل الدخول بحساب Google لبدء المحادثة الصوتية المباشرة." });
+        ws.close(4001, "Unauthorized");
+        return;
+      }
+
+      const decoded = await adminAuth.verifyIdToken(token);
+      verifiedUid = decoded.uid;
+      verifiedEmail = decoded.email || `${decoded.uid}@users.local`;
+
+      const quotaCheck = checkUserCloudQuota(verifiedUid, verifiedEmail);
+      if (!quotaCheck.allowed) {
+        safeSend({ type: "error", detail: quotaCheck.message });
+        ws.close(4029, "Quota exceeded");
+        return;
+      }
+
+      const ai = createServerGeminiClient(60000);
+      liveSession = await ai.live.connect({
+        model: "gemini-3.8-live",
+        config: {
+          responseModalities: [Modality.AUDIO],
+          speechConfig: {
+            voiceConfig: {
+              prebuiltVoiceConfig: { voiceName },
+            },
+          },
+          systemInstruction:
+            "أنت «نواة» في وضع المحادثة الصوتية الفورية. تحدّث بلغة عربية واضحة وطبيعية وبإجابات صوتية رشيقة ومباشرة، وتفهم الإنجليزية عند التبديل إليها.",
+          inputAudioTranscription: {},
+          outputAudioTranscription: {},
+        },
+        callbacks: {
+          onopen: () => {
+            recordUserCloudUsage(verifiedUid, verifiedEmail, 150);
+            safeSend({ type: "ready" });
+          },
+          onmessage: (msg) => {
+            const sc = msg.serverContent;
+            if (!sc) return;
+            if (sc.interrupted) {
+              safeSend({ type: "interrupted" });
+            }
+            if (sc.inputTranscription?.text) {
+              safeSend({ type: "input_transcript", text: sc.inputTranscription.text });
+            }
+            if (sc.outputTranscription?.text) {
+              safeSend({ type: "output_transcript", text: sc.outputTranscription.text });
+            }
+            const parts = sc.modelTurn?.parts;
+            if (Array.isArray(parts)) {
+              for (const part of parts) {
+                if (part.inlineData?.data) {
+                  safeSend({
+                    type: "audio",
+                    data: part.inlineData.data,
+                    mimeType: part.inlineData.mimeType || "audio/pcm;rate=24000",
+                  });
+                }
+              }
+            }
+            if (sc.turnComplete) {
+              safeSend({ type: "turn_complete" });
+            }
+          },
+          onerror: (err) => {
+            safeSend({
+              type: "error",
+              detail: err instanceof Error ? err.message : "حدث خطأ في قناة الصوت المباشر.",
+            });
+          },
+          onclose: () => {
+            safeSend({ type: "closed" });
+          },
+        },
+      });
+    } catch (err) {
+      const mapped = normalizeGeminiApiError(err);
+      safeSend({ type: "error", detail: mapped.message });
+      ws.close(1011, "Live init failed");
+      return;
+    }
+
+    ws.on("message", (raw) => {
+      if (!liveSession) return;
+      try {
+        const msg = JSON.parse(String(raw)) as {
+          type?: string;
+          data?: string;
+          text?: string;
+        };
+        if (msg.type === "audio" && msg.data) {
+          liveSession.sendRealtimeInput({
+            audio: { data: msg.data, mimeType: "audio/pcm;rate=16000" },
+          });
+        } else if (msg.type === "text" && msg.text) {
+          liveSession.sendClientContent({
+            turns: msg.text,
+            turnComplete: true,
+          });
+        }
+      } catch {
+        // ignore malformed frames
+      }
+    });
+
+    ws.on("close", () => {
+      try {
+        liveSession?.close();
+      } catch {
+        // ignore
+      }
+    });
+  });
+
+  httpServer.listen(PORT, "0.0.0.0", () => {
     console.log(`NawaCore Studio listening on http://0.0.0.0:${PORT}`);
+    setImmediate(() => {
+      try {
+        getNawaTransformerLM();
+      } catch (err) {
+        console.error("NawaTransformerLM warmup error:", err);
+      }
+    });
   });
 }
 

@@ -432,6 +432,9 @@ export function deepFuzzyNormalizeArabic(raw: string): string {
     .replace(/(^|\s)(?:تلفون|تليفون|فون)(?=\s|$)/g, "$1موبايل")
     .replace(/(^|\s)اندرود(?=\s|$)/g, "$1اندرويد")
     .replace(/(^|\s)(?:ادموب|اد موب)(?=\s|$)/g, "$1admob")
+    .replace(/(^|\s)(?:كوبرنيتس|كبرنيتس)(?=\s|$)/g, "$1kubernetes")
+    .replace(/(^|\s)(?:دوكر)(?=\s|$)/g, "$1docker")
+    .replace(/(^|\s)(?:نيكست)(?=\s|$)/g, "$1nextjs")
     .replace(/[^\p{L}\p{N}._+\-/ ]/gu, " ")
     .replace(/\s+/g, " ")
     .trim();
